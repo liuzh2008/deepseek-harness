@@ -5,6 +5,22 @@ import { RpcId } from '../src/api/rpc.ts'
 import { toFetchHandler } from '../src/fetch/handler.ts'
 import { AbstractApiClient, InProcessApiClient } from '../src/fetch/client.ts'
 
+/** Test probe: echoes every minted rpcId back as a successful list response and records the request URLs. */
+class ProbeClient extends AbstractApiClient {
+  urls: string[] = []
+  lastMinted = ''
+  protected async doFetch(input: URL): Promise<Response> {
+    this.urls.push(input.href)
+    return Response.json({ type: 'server-response', rpcId: this.lastMinted, result: { ok: true, value: { items: [] } } })
+  }
+
+  protected override mintRpcId(): ReturnType<AbstractApiClient['mintRpcId']> {
+    const id = super.mintRpcId()
+    this.lastMinted = id
+    return id
+  }
+}
+
 /** Minimal in-memory ApiProxy: echoes rpcIds, scripts one frame per stream. */
 function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFrame[]; crashOn: string }> = {}): ApiProxy {
   const muxFrames = overrides.muxFrames ?? [{ type: 'session/subscribed', sessionId: 's1' as never, lastSeq: -1 }]
@@ -770,36 +786,38 @@ describe('envelope observation', () => {
 
 describe('resolveBase', () => {
   it('prefers a real location.origin and falls back to the internal authority', async () => {
-    class Probe extends AbstractApiClient {
-      urls: string[] = []
-      protected async doFetch(input: URL): Promise<Response> {
-        this.urls.push(input.href)
-        return Response.json({ type: 'server-response', rpcId: this.lastMinted, result: { ok: true, value: { items: [] } } })
-      }
-
-      lastMinted = ''
-      protected override mintRpcId(): ReturnType<AbstractApiClient['mintRpcId']> {
-        const id = super.mintRpcId()
-        this.lastMinted = id
-        return id
-      }
-    }
-    const probe = new Probe()
+    const probe = new ProbeClient()
     await probe.sessions.list({})
     expect(probe.urls[0]).toMatch(/^http:\/\/dsh\.internal\//)
 
     const globalWithLocation = globalThis as { location?: { origin?: string } }
     globalWithLocation.location = { origin: 'http://host.example' }
     try {
-      const probe2 = new Probe()
+      const probe2 = new ProbeClient()
       await probe2.sessions.list({})
       expect(probe2.urls[0]).toMatch(/^http:\/\/host\.example\//)
       globalWithLocation.location = { origin: 'null' } // sandboxed iframe shape
-      const probe3 = new Probe()
+      const probe3 = new ProbeClient()
       await probe3.sessions.list({})
       expect(probe3.urls[0]).toMatch(/^http:\/\/dsh\.internal\//)
     } finally {
       delete globalWithLocation.location
+    }
+  })
+})
+
+describe('insecure-origin rpcId minting', () => {
+  it('mints version 4 rpcIds when crypto.randomUUID is absent (plain-HTTP LAN origins)', async () => {
+    const getRandomValues = vi.fn((bytes: Uint8Array) => bytes.fill(7))
+    vi.stubGlobal('crypto', { getRandomValues })
+    try {
+      const probe = new ProbeClient()
+      await expect(probe.sessions.list({})).resolves.toMatchObject({ result: { ok: true, value: { items: [] } } })
+      expect(getRandomValues).toHaveBeenCalled()
+      // RFC 4122 v4 shape: 8-4-4-4-12 with a 4 at position 13 and a [89ab] at 17.
+      expect(probe.lastMinted).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })
