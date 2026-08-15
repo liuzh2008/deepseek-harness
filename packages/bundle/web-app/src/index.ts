@@ -53,6 +53,8 @@ export interface Config {
   surfaceContext: boolean
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** `--allow-remote-privileged-methods` from this invocation; false when omitted. */
+  allowRemotePrivilegedMethods: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -60,6 +62,7 @@ export const Config: z<Config> = z.object({
   printUrl: z.boolean().default(true),
   surfaceContext: z.boolean().default(true),
   trustedHosts: z.array(String).default([]),
+  allowRemotePrivilegedMethods: z.boolean().default(false),
 })
 
 /** Bind-dependent Web values shared by the trust fence and URL display. */
@@ -68,6 +71,8 @@ export interface WebRuntimeValues {
   lanAddresses: string[]
   /** LAN literals followed by explicit invocation authorities. */
   trustedHosts: string[]
+  /** Pass-through of the invocation's `--allow-remote-privileged-methods`. */
+  allowRemotePrivilegedMethods: boolean
 }
 
 /** Environment variable naming the canonical local URL of this Web GUI. */
@@ -129,7 +134,10 @@ try {
  * @param extra - explicit `--trusted-host` values, in argument order.
  * @returns the LAN display addresses and invocation-derived fence authorities.
  */
-export function resolveLanTrust(bindHost: string, extra: readonly string[]): WebRuntimeValues {
+export function resolveLanTrust(
+  bindHost: string,
+  extra: readonly string[],
+): Pick<WebRuntimeValues, 'lanAddresses' | 'trustedHosts'> {
   const lanAddresses = bindHost === ALL_INTERFACES_HOST
     ? Object.values(networkInterfaces()).flat()
       .filter((iface): iface is NonNullable<typeof iface> => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
@@ -225,11 +233,15 @@ export const internals: {
  */
 export function apply(ctx: Context, config: Config): void {
   const runtime = resolveLanTrust(ctx.webServer.host, config.trustedHosts)
+  const webRuntime: WebRuntimeValues = {
+    ...runtime,
+    allowRemotePrivilegedMethods: config.allowRemotePrivilegedMethods,
+  }
   // The loopback URL belongs to this host. Under SSH, the operator reaches it
   // through a local forwarding address that this process cannot derive.
   const handoffBrowser = config.openBrowser && !launchedThroughSsh(ctx)
   // Release dependent rows only after bind-dependent trust has been sampled once.
-  ctx.provide(WEB_RUNTIME_SERVICE, runtime)
+  ctx.provide(WEB_RUNTIME_SERVICE, webRuntime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
   if (config.surfaceContext) {
     ctx.inject(['systemPrompt'], (promptCtx) => {

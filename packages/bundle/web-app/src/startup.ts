@@ -29,6 +29,8 @@ export interface WebStartupValues {
   port?: number
   /** Explicit `--trusted-host` authorities, in argument order. */
   trustedHosts: string[]
+  /** `--allow-remote-privileged-methods`, false when the invocation did not name it. */
+  allowRemotePrivilegedMethods: boolean
 }
 
 /** The web flag family, as commander parsed it. */
@@ -37,6 +39,7 @@ interface WebOptions {
   open: boolean
   port?: string
   trustedHost?: string[]
+  allowRemotePrivilegedMethods?: boolean
 }
 
 /**
@@ -52,11 +55,14 @@ function webCommand(): Command {
     .option('--no-open', 'do not open the Web UI in the default browser')
     .option('--port <port>', 'listen port; pass 0 to let the OS pick a free one')
     .option('--trusted-host <authority...>', 'extra authority the /api browser-trust fence accepts (host or host:port; repeatable)')
+    .option('--allow-remote-privileged-methods', 'let trusted authorities reach the privileged methods (settings, credentials, agent-preset authoring, native dialogs) normally pinned to loopback')
     .addHelpText('after', `
 Examples:
   dsh --profile web                          serve on the composed host and port
   dsh --profile web --no-open                serve without opening a browser
   dsh --profile web --port 8080              serve on another port
+  dsh --profile web --host 100.66.1.3 --trusted-host 100.66.1.3 --allow-remote-privileged-methods
+                                             serve on a LAN/Tailscale address and let its browsers edit settings
 `)
 }
 
@@ -82,6 +88,7 @@ export function apply(ctx: Context): void {
       ...options.host !== undefined && { host: options.host },
       ...options.port !== undefined && { port: Number(options.port) },
       trustedHosts: options.trustedHost ?? [],
+      allowRemotePrivilegedMethods: options.allowRemotePrivilegedMethods ?? false,
     } satisfies WebStartupValues)
   })
   parseCmdline(ctx, program)
