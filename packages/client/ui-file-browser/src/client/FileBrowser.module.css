@@ -165,42 +165,91 @@
   cursor: default;
 }
 
-/* Two-pane body: the list and the preview each scroll independently, with a
-   draggable divider between them. */
+/* Two-pane body: the list (fixed width, hideable) and the preview each own
+   their scroll regions. */
 .body {
   flex: 1;
   min-height: 0;
   display: flex;
 }
 
+/* File list pane: a fixed-width column; the crumb-bar control hides it to
+   give the preview the full body width. */
 .listArea {
-  flex: 1 1 52%;
-  min-width: 160px;
+  flex: none;
+  width: 260px;
   overflow-y: auto;
   padding: 6px 0;
   display: flex;
   flex-direction: column;
 }
 
-/* Draggable divider: the 5px hit strip owns the col-resize affordance. */
-.resizer {
-  flex: none;
-  width: 5px;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-}
-
-.resizer:hover {
-  background: var(--dsw-color-border);
-}
-
 .previewArea {
-  flex: 1 1 48%;
+  flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow-y: auto;
   border-left: 1px solid var(--dsw-color-border);
   background: var(--dsw-color-surface-muted, var(--dsw-color-surface));
+}
+
+/* Horizontal row under the path bar: the optional TOC panel plus the
+   scrollable preview surface. */
+.previewBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Table-of-contents side panel (markdown previews only). */
+.tocPanel {
+  flex: none;
+  width: 200px;
+  max-width: 40%;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 8px 0;
+  border-right: 1px solid var(--dsw-color-border);
+  background: var(--dsw-color-surface);
+}
+
+.tocTitle {
+  padding: 2px 14px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-color-text-tertiary);
+}
+
+.tocList {
+  display: flex;
+  flex-direction: column;
+}
+
+.tocItem {
+  display: block;
+  width: 100%;
+  padding: 4px 14px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tocItem:hover,
+.tocItem:focus-visible {
+  background: var(--dsw-color-hover);
+  color: var(--dsw-color-text-primary);
+  outline: none;
 }
 
 .previewHint {
@@ -213,6 +262,7 @@
 /* Scroll container for the preview body (text or rendered markdown). */
 .previewWrap {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
 }
@@ -282,6 +332,14 @@
 }
 
 .copyButton:hover {
+  background: var(--dsw-color-hover);
+  color: var(--dsw-color-text-primary);
+}
+
+/* The TOC toggle's pressed state: lit like a hover so the open panel reads
+   as attached to its trigger. */
+.copyButtonActive,
+.copyButtonActive:hover {
   background: var(--dsw-color-hover);
   color: var(--dsw-color-text-primary);
 }

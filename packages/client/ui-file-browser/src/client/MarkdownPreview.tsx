@@ -2,7 +2,9 @@
  * Markdown preview for the file browser: renders `.md`/`.markdown` sources by
  * splitting ` ```mermaid ` fences out of the document and rendering each
  * fence as a live diagram, with every other region flowing through the shared
- * MarkdownText renderer (GFM tables, footnotes, KaTeX math).
+ * MarkdownText renderer (GFM tables, footnotes, KaTeX math). The same source
+ * feeds {@link extractToc}, which powers the preview's table-of-contents
+ * panel.
  */
 import { useMemo, type ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -49,4 +51,55 @@ export function MarkdownPreview({ source }: { source: string }) {
     return out
   }, [regions])
   return <div className={css.markdownPreview}>{children}</div>
+}
+
+/** One heading entry extracted from a markdown source for its table of contents. */
+export interface TocEntry {
+  /** ATX heading level (1–6). */
+  readonly level: number
+  /** Heading text with inline markdown formatting stripped. */
+  readonly text: string
+}
+
+/**
+ * Reduce a heading's inline markdown to its plain display form: links and
+ * images reduce to their label, inline code loses its backticks, emphasis
+ * markers are removed, and the common HTML entities decode so the result can
+ * be matched against the rendered heading's textContent.
+ */
+function plainHeadingText(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(\*|_)(.*?)\1/g, '$2')
+    .replace(/~~(.*?)~~/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** One ATX heading line: 1–6 `#` markers followed by whitespace and text. */
+const ATX_HEADING = /^(#{1,6})[ \t]+(.+?)[ \t]*$/gm
+
+/**
+ * Extract the document's ATX headings into table-of-contents entries. Fenced
+ * code blocks — mermaid diagrams included — are masked out first so their
+ * contents never contribute headings; setext underlines and headings nested
+ * in blockquotes are intentionally not tracked.
+ */
+export function extractToc(source: string): TocEntry[] {
+  const body = source.replace(/```[\s\S]*?(?:```|$)/g, '')
+  const entries: TocEntry[] = []
+  for (const match of body.matchAll(ATX_HEADING)) {
+    const text = plainHeadingText(match[2] ?? '')
+    if (text === '') continue
+    entries.push({ level: (match[1] ?? '').length, text })
+  }
+  return entries
 }
