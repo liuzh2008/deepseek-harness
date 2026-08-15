@@ -407,6 +407,16 @@ export interface ConnectionConfig {
    * that is not a bare, canonical authority fails the plugin load.
    */
   trustedHosts?: string[]
+  /**
+   * Let a declared trusted authority reach the privileged method set too, not
+   * just loopback. The default keeps the whole configuration plane
+   * loopback-same-origin; this flag is the explicit, deployment-wide opt-out
+   * for a deployment that already trusts `trustedHosts` (a VPN or trusted
+   * LAN) and accepts the configuration-plane exposure that comes with it.
+   * It only widens the pin — the outer DNS-rebinding and cross-site fences
+   * still apply, and the flag does nothing without `trustedHosts` entries.
+   */
+  allowRemotePrivilegedMethods?: boolean
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
 }
@@ -2886,6 +2896,8 @@ export interface Config {
   surfaceContext: boolean
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** `--allow-remote-privileged-methods` from this invocation; false when omitted. */
+  allowRemotePrivilegedMethods: boolean
 }
 ```
 

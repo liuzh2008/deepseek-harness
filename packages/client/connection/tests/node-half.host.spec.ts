@@ -74,7 +74,7 @@ function fakeResponse(): { response: ServerResponse; state: { status?: number; b
   return { response, state }
 }
 
-async function mounted(config?: { trustedHosts?: string[] }): Promise<{
+async function mounted(config?: { trustedHosts?: string[]; allowRemotePrivilegedMethods?: boolean }): Promise<{
   routes: WebRoute[]
   upgrades: WebUpgradeRoute[]
   dispose: () => Promise<void>
@@ -189,6 +189,46 @@ describe('connection node half', () => {
     const read = fakeResponse()
     await routes[0]!.handler(fakeRequest({ host: 'harness.example' }), read.response)
     expect(read.state.status).not.toBe(403)
+    await dispose()
+  })
+
+  it('widens the privileged pin to declared authorities under allowRemotePrivilegedMethods', async () => {
+    const { routes, dispose } = await mounted({
+      trustedHosts: ['harness.example'],
+      allowRemotePrivilegedMethods: true,
+    })
+    // With the explicit opt-out, every privileged method passes for the
+    // declared authority: 404 is the empty proxy's carrier answer, proving
+    // the fence let the request through to the bridge.
+    for (const method of [
+      'host.pickDirectory', 'host.openPath',
+      'settings.describe', 'settings.openDocument', 'settings.update', 'settings.replace', 'settings.mutate',
+      'credentials.describe', 'credentials.set', 'credentials.unset',
+      'llm.discoverModels',
+      'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
+    ]) {
+      const allowed = fakeResponse()
+      await routes[0]!.handler(
+        fakeRequest({ host: 'harness.example' }, `${API_PATH}/${method}`),
+        allowed.response,
+      )
+      expect(allowed.state.status).toBe(404)
+    }
+    // Loopback keeps working under the opt-out.
+    const loopback = fakeResponse()
+    await routes[0]!.handler(
+      fakeRequest({ host: '127.0.0.1:3080' }, `${API_PATH}/settings.describe`),
+      loopback.response,
+    )
+    expect(loopback.state.status).toBe(404)
+    // An authority OUTSIDE the trusted list stays refused: the flag widens the
+    // pin to trusted authorities, it does not open the fence.
+    const outsider = fakeResponse()
+    await routes[0]!.handler(
+      fakeRequest({ host: 'other.example' }, `${API_PATH}/settings.describe`),
+      outsider.response,
+    )
+    expect(outsider.state.status).toBe(403)
     await dispose()
   })
 
@@ -487,6 +527,33 @@ describe('connection node half over a real HTTP server', () => {
       }
       // Loopback reaches everything, configuration included.
       expect(await call(port, 'settings.describe', `127.0.0.1:${String(port)}`)).toBe(404)
+    } finally {
+      await close()
+      await dispose()
+    }
+  })
+
+  it('lets a declared LAN authority reach configuration methods under allowRemotePrivilegedMethods, over real HTTP', async () => {
+    // Same wire-parse boundary as above, with the explicit opt-out: the Host
+    // header a LAN browser sends now passes the widened pin, so the fence
+    // answers with the carrier's 404 instead of 403.
+    const { routes, dispose } = await mounted({
+      trustedHosts: ['harness.example'],
+      allowRemotePrivilegedMethods: true,
+    })
+    const { port, close } = await serve(routes)
+    try {
+      for (const method of [
+        'settings.describe', 'settings.openDocument', 'settings.update', 'settings.replace', 'settings.mutate',
+        'credentials.describe', 'credentials.set', 'credentials.unset',
+        'host.pickDirectory', 'host.openPath',
+        'llm.discoverModels',
+        'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
+      ]) {
+        expect([method, await call(port, method, 'harness.example')]).toEqual([method, 404])
+      }
+      // An untrusted authority is still refused even with the flag on.
+      expect(await call(port, 'settings.describe', 'other.example')).toBe(403)
     } finally {
       await close()
       await dispose()

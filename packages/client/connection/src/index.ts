@@ -57,12 +57,23 @@ export interface ConnectionConfig {
    * that is not a bare, canonical authority fails the plugin load.
    */
   trustedHosts?: string[]
+  /**
+   * Let a declared trusted authority reach the privileged method set too, not
+   * just loopback. The default keeps the whole configuration plane
+   * loopback-same-origin; this flag is the explicit, deployment-wide opt-out
+   * for a deployment that already trusts `trustedHosts` (a VPN or trusted
+   * LAN) and accepts the configuration-plane exposure that comes with it.
+   * It only widens the pin — the outer DNS-rebinding and cross-site fences
+   * still apply, and the flag does nothing without `trustedHosts` entries.
+   */
+  allowRemotePrivilegedMethods?: boolean
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
 }
 
 export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
+  allowRemotePrivilegedMethods: z.boolean().default(false),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
 })
 
@@ -76,7 +87,11 @@ export const Config: z<ConnectionConfig> = z.object({
  * reconnaissance no anonymous caller should have. `trustedHosts` is a
  * DNS-rebinding fence, explicitly not authentication, so the whole
  * configuration plane stays loopback-same-origin until a real authentication
- * layer exists. `llm.discoverModels` belongs to that plane on both counts: it
+ * layer exists — unless the deployment sets
+ * `allowRemotePrivilegedMethods: true`, which extends the same pin to the
+ * declared trusted authorities (that flag is the configuration-plane
+ * exception, and it too is not authentication). `llm.discoverModels` belongs
+ * to that plane on both counts: it
  * carries a draft credential, and it makes the HOST issue a GET to a URL the
  * caller chose and reports back the status or the parsed body — an anonymous
  * LAN caller would have a probe for whatever the host can reach and the
@@ -130,6 +145,7 @@ const PRIVILEGED_METHODS = new Set([
 export function apply(ctx: Context, config?: ConnectionConfig): void {
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
+  const allowRemotePrivilegedMethods = config?.allowRemotePrivilegedMethods ?? false
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
   // Config boundary: a malformed entry fails the load loudly here rather than
   // silently authorizing its hostname prefix at request time.
@@ -144,7 +160,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
         : undefined
       if (method !== undefined
         && PRIVILEGED_METHODS.has(method)
-        && !isTrustedApiRequest(request, [])) {
+        && !isTrustedApiRequest(request, allowRemotePrivilegedMethods ? trustedHosts : [])) {
         return new Response('forbidden', { status: 403 })
       }
       if (request.method === 'GET' && (pathname === MUX_EVENTS_PATH || pathname === HOST_EVENTS_PATH)) {
