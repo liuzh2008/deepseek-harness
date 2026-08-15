@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Read-only project file browser Remote for the Web GUI. `FileBrowserGateway` registers the `fileBrowser` service and publishes two generated direct Remotes: `fileBrowser/list` (one directory level, files AND directories with size and mtime) and `fileBrowser/read` (bounded UTF-8 text preview). Every operation is confined to the workspace root resolved from `ctx.sandboxPolicy`: non-absolute or escaping paths are rejected with a typed failure, so the browser can never read outside the project.
+Read-only project file browser Remote for the Web GUI. `FileBrowserGateway` registers the `fileBrowser` service and publishes two generated direct Remotes: `fileBrowser/list` (one directory level, files AND directories with size and mtime) and `fileBrowser/read` (bounded UTF-8 text preview). The browser opens at the configured default root (the resolved sandbox workspace root when absent) but is NOT confined to it — any absolute host path can be listed and read, so the operator can navigate anywhere on the host.
 
 The listing is sorted directories-first then by name, and bounded by the `maxEntries` config (truncated levels are flagged); previews are bounded by `maxReadBytes` (larger files return their UTF-8 head with a `truncated` flag). Public payload types live under `./types`, and Typert generates the Host and Client Remote artifacts exposed by `./typert` and `./remote`.
 
@@ -18,6 +18,6 @@ None; this package never assembles model input.
 
 ## Known Limitations and Deferred Work
 
-- **Workspace-root confined** — the browser lists only the resolved sandbox workspace root and its descendants; navigating to arbitrary host paths is intentionally unsupported.
+- **Not confined to the default root** — the browser opens at the configured root but can navigate anywhere on the host; this is read-only (list + bounded preview), never a mutation path.
 - **Text preview only** — `read` decodes UTF-8 and truncates at the configured byte bound; binary files are not detected or rendered.
 - **No mutation** — the service is read-only; creating, renaming, or deleting files is out of scope for this plugin.

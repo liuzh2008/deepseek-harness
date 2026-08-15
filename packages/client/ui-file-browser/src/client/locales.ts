@@ -26,6 +26,9 @@ export const zh = {
   maximize: '最大化',
   restore: '还原',
   resize: '调整列表宽度',
+  exportPdf: '导出 PDF',
+  exporting: '导出中…',
+  exportFailed: '导出失败',
 } satisfies Record<string, string>
 
 /** File browser locale key union. */
@@ -57,4 +60,7 @@ export const en = {
   maximize: 'Maximize',
   restore: 'Restore',
   resize: 'Resize list pane',
+  exportPdf: 'Export PDF',
+  exporting: 'Exporting…',
+  exportFailed: 'Export failed',
 } satisfies Record<FileBrowserLocaleKey, string>

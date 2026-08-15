@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconChevronRightOutline14, IconCloseOutline16, IconCopyOutline16, IconFolderClose16,
+  Button, IconChevronRightOutline14, IconCloseOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16,
   IconFolderOpenOutline16, IconFullscreenOutline16, IconRefreshOutline16, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
@@ -19,6 +19,7 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { PropsLocale, PropsRuntime, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-locale/client'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
+import { exportPreviewToPdf } from './exportPdf.ts'
 import css from './FileBrowser.module.css'
 
 /** Owner-supplied browser props: browse calls and copy. */
@@ -186,6 +187,9 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
   const [currentPath, setCurrentPath] = useState<string | undefined>(undefined)
   // Post-copy confirmation for the relative-path button (1s window).
   const [pathCopied, setPathCopied] = useState(false)
+  // In-flight PDF export (disables the export button while running).
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
   const requestSeq = useRef(0)
 
   const load = useCallback((path?: string) => {
@@ -283,6 +287,21 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'col-resize'
   }, [listWidth])
+
+  // PDF export of the rendered preview (mermaid diagrams included). The
+  // export targets the preview body element so only the file content lands
+  // in the document.
+  const previewRef = useRef<HTMLDivElement | null>(null)
+  const handleExportPdf = useCallback(() => {
+    const preview = previewRef.current
+    if (preview === null || readState.status !== 'ready' || exporting) return
+    setExporting(true)
+    setExportError(null)
+    void exportPreviewToPdf(preview, readState.path).then((result) => {
+      setExporting(false)
+      if (!result.ok) setExportError(result.message)
+    })
+  }, [readState, exporting])
 
   return (
     <>
@@ -420,8 +439,21 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
                       <IconCopyOutline16 size={13} />
                       {pathCopied ? t('copied') : t('copyPath')}
                     </button>
+                    <button
+                      type="button"
+                      className={css.copyButton}
+                      aria-label={t('exportPdf')}
+                      disabled={exporting}
+                      onClick={() => { void handleExportPdf() }}
+                    >
+                      <IconDownloadOutline16 size={13} />
+                      {exporting ? t('exporting') : t('exportPdf')}
+                    </button>
                   </div>
-                  <div className={css.previewWrap}>
+                  {exportError !== null && (
+                    <div className={css.exportError} role="alert">{t('exportFailed')}: {exportError}</div>
+                  )}
+                  <div ref={previewRef} className={css.previewWrap}>
                     {isMarkdownFile(readState.path)
                       ? <MarkdownPreview source={readState.content} />
                       : (
