@@ -2073,6 +2073,9 @@ importers:
       clsx:
         specifier: ^2.0.0
         version: 2.1.1
+      mermaid:
+        specifier: ^11.16.0
+        version: 11.16.0
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^

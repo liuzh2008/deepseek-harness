@@ -554,6 +554,11 @@ function clientConfig(id: string, entry: string): UserConfig {
     }],
     outputOptions: {
       entryFileNames: 'client.js',
+      // The plugin bundle route serves exactly one file per package
+      // (/plugins/<id>/client.js); a dynamic import would split into sibling
+      // chunks that route cannot reach. Inline everything so the bundle stays
+      // self-contained (mermaid and friends are large but single-file).
+      inlineDynamicImports: true,
       // The map is served from /plugins/<scoped-package>/client.js.map. The
       // browser resolves its local sources back into URLs that mirror the
       // /packages/<group>/<package>/src directories; sourcesContent keeps them usable

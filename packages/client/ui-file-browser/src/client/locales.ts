@@ -23,6 +23,9 @@ export const zh = {
   copyPath: '复制相对路径',
   copied: '已复制',
   pathLabel: '相对路径',
+  maximize: '最大化',
+  restore: '还原',
+  resize: '调整列表宽度',
 } satisfies Record<string, string>
 
 /** File browser locale key union. */
@@ -51,4 +54,7 @@ export const en = {
   copyPath: 'Copy relative path',
   copied: 'Copied',
   pathLabel: 'Relative path',
+  maximize: 'Maximize',
+  restore: 'Restore',
+  resize: 'Resize list pane',
 } satisfies Record<FileBrowserLocaleKey, string>
