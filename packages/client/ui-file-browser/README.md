@@ -6,6 +6,8 @@ Sidebar file browser for the Web GUI. The browser half registers a `sidebar.foot
 
 The dialog's copy is locale-registered here (this package's namespace). Every listing and preview is re-read from the Host on demand; the client never joins path segments and holds no file state. A stale in-flight response is invalidated when the dialog closes or a newer navigation supersedes it.
 
+The dialog also provides a `fileBrowserOpener` service (`ctx.get('fileBrowserOpener')`): the chat view routes file opens through it, so clicking a produced-file chip or an inline-code file mention opens the dialog already positioned at the file's directory with the file auto-previewed (a directory target lands on its own listing). The service accepts an open only while the dialog is mounted; callers fall back to the Host's native opener otherwise.
+
 ## Model Experience
 
 None, as this browser half only renders Host-owned file listings and previews in the Web GUI and registers no model interface.
