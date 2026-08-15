@@ -100,6 +100,11 @@
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
 
+    # Read-only project file browser: directory listing with files and text
+    # preview, confined to the workspace root; the browser half drives it.
+    - id: file-browser
+      name: '@deepseek-ai/dsh-host-file-browser'
+
     # The API gateway: the transport-agnostic dispatch face every client shape
     # shares. The base layer's agent-default-model service owns the default model.
     - id: api-gateway
@@ -300,6 +305,11 @@
 
     - id: ui-trajectory
       name: '@deepseek-ai/dsh-client-ui-trajectory'
+
+    # Sidebar file browser: a footer-action button opening the project file
+    # browser dialog over the host fileBrowser Remote.
+    - id: ui-file-browser
+      name: '@deepseek-ai/dsh-client-ui-file-browser'
 
 # ── the agent plane moves behind agent presets ─────────────────────────────
 #
