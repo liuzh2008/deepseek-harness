@@ -286,6 +286,19 @@
   color: var(--dsw-color-text-primary);
 }
 
+.copyButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.exportError {
+  padding: 6px 12px;
+  color: var(--dsw-color-danger, #e5484d);
+  font-size: 12px;
+  border-bottom: 1px solid var(--dsw-color-border);
+  flex: none;
+}
+
 .preview {
   margin: 0;
   padding: 12px 14px;
