@@ -39,6 +39,13 @@
   gap: 0;
 }
 
+/* Maximized dialog: fill nearly the whole viewport (mask padding keeps a
+   visible border around the card). */
+.dialogMaximized {
+  width: min(96vw, 100vw - 48px);
+  height: min(94vh, 100vh - 48px);
+}
+
 .dialogBody {
   display: flex;
   flex-direction: column;
@@ -60,6 +67,12 @@
   font-size: 16px;
   font-weight: 500;
   color: var(--dsw-color-text-primary);
+}
+
+.headerActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .closeButton {
@@ -152,7 +165,8 @@
   cursor: default;
 }
 
-/* Two-pane body: the list and the preview each scroll independently. */
+/* Two-pane body: the list and the preview each scroll independently, with a
+   draggable divider between them. */
 .body {
   flex: 1;
   min-height: 0;
@@ -161,11 +175,24 @@
 
 .listArea {
   flex: 1 1 52%;
-  min-width: 0;
+  min-width: 160px;
   overflow-y: auto;
   padding: 6px 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Draggable divider: the 5px hit strip owns the col-resize affordance. */
+.resizer {
+  flex: none;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.resizer:hover {
+  background: var(--dsw-color-border);
 }
 
 .previewArea {
@@ -181,6 +208,34 @@
   color: var(--dsw-color-text-tertiary);
   font-size: 13px;
   text-align: center;
+}
+
+/* Scroll container for the preview body (text or rendered markdown). */
+.previewWrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Rendered markdown surface: the shared MarkdownText output plus diagram
+   blocks, scrolling with the wrap above. */
+.markdownPreview {
+  padding: 4px 16px 16px;
+}
+
+.markdownPreview :global(.md-code-block) {
+  margin: 8px 0;
+}
+
+/* Live mermaid diagram: inline SVG is block-level and full-width. */
+.mermaid {
+  margin: 10px 0;
+  overflow-x: auto;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
 }
 
 /* Relative-path bar above the preview: label, value, and the copy control. */

@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconChevronRightOutline14, IconCloseOutline16, IconCopyOutline16, IconFolderClose16,
-  IconFolderOpenOutline16, IconRefreshOutline16, Modal, Tooltip, writeClipboard,
+  IconFolderOpenOutline16, IconFullscreenOutline16, IconRefreshOutline16, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   FileBrowserEntry, FileBrowserListing, FileBrowserListResult, FileBrowserReadResult,
@@ -18,6 +18,7 @@ import type {
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { PropsLocale, PropsRuntime, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-locale/client'
+import { MarkdownPreview } from './MarkdownPreview.tsx'
 import css from './FileBrowser.module.css'
 
 /** Owner-supplied browser props: browse calls and copy. */
@@ -63,6 +64,38 @@ function relativePath(path: string, root: string): string {
   const prefix = root.endsWith('\\') || root.endsWith('/') ? root : `${root}${path.includes('\\') ? '\\' : '/'}`
   if (!path.startsWith(prefix)) return path.split(/[\\/]/).pop() ?? path
   return path.slice(prefix.length).replace(/\\/g, '/')
+}
+
+/** Whether a previewed file should render as Markdown (mermaid-capable). */
+function isMarkdownFile(path: string): boolean {
+  const base = path.split(/[\\/]/).pop() ?? path
+  return /\.(md|markdown|mdx)$/i.test(base)
+}
+
+/** localStorage key for the user-adjusted list pane width (persisted across reloads). */
+const LIST_WIDTH_KEY = 'dsh.file-browser.listWidth'
+
+/** Read the persisted list width, or null when absent/invalid. */
+function readPersistedListWidth(): number | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(LIST_WIDTH_KEY)
+    if (raw === null) return null
+    const value = JSON.parse(raw) as unknown
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+/** Persist the list width; storage failures only disable persistence. */
+function writePersistedListWidth(value: number): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(LIST_WIDTH_KEY, JSON.stringify(Math.round(value)))
+  } catch (error) {
+    console.error('file-browser: list width persistence failed:', error)
+  }
 }
 
 /** One row: the entry's icon, name, and (for files) size; folders get a
@@ -141,6 +174,11 @@ type ReadState =
  */
 export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProps) {
   const [open, setOpen] = useState(false)
+  // Maximized dialog state (toggled by the header fullscreen control).
+  const [maximized, setMaximized] = useState(false)
+  // List-pane width in px once the user drags the divider (null = default
+  // ratio); seeded from the persisted value so a reload restores the layout.
+  const [listWidth, setListWidth] = useState<number | null>(readPersistedListWidth)
   const [listState, setListState] = useState<ListState>({ status: 'loading' })
   const [readState, setReadState] = useState<ReadState>({ status: 'idle' })
   // The level currently displayed (kept across dialog opens so navigation
@@ -213,6 +251,39 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
   const entries = listing?.entries ?? []
   const busy = listState.status === 'loading'
 
+  // Divider drag: the list pane takes a fixed pixel width while dragging
+  // (clamped to sane bounds); a null width keeps the default 52/48 ratio.
+  // The live width rides a ref so the mouseup handler persists the final
+  // value without stale closure state.
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const liveListWidth = useRef(listWidth)
+  liveListWidth.current = listWidth
+  const startResize = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const body = bodyRef.current
+    if (body === null) return
+    const startX = event.clientX
+    const startWidth = listWidth ?? body.getBoundingClientRect().width * 0.52
+    const onMove = (move: MouseEvent): void => {
+      const rect = body.getBoundingClientRect()
+      const next = startWidth + (move.clientX - startX)
+      const clamped = Math.min(Math.max(next, 160), rect.width - 240)
+      setListWidth(clamped)
+    }
+    const onUp = (): void => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      const settled = liveListWidth.current
+      if (settled !== null) writePersistedListWidth(settled)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+  }, [listWidth])
+
   return (
     <>
       <Tooltip label={t('actionLabel')} side="right" delayMs={500} disabled={wide}>
@@ -233,15 +304,26 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
         onClose={() => { setOpen(false) }}
         closeLabel={t('close')}
         title={t('browserTitle')}
-        className={css.dialog as string}
+        className={clsx(css.dialog, maximized && css.dialogMaximized) as string}
         headless
       >
         <div className={css.dialogBody}>
           <div className={css.headerBar}>
             <h2 className={css.title}>{t('browserTitle')}</h2>
-            <button type="button" className={css.closeButton} aria-label={t('close')} onClick={() => { setOpen(false) }}>
-              <IconCloseOutline16 size={14} />
-            </button>
+            <div className={css.headerActions}>
+              <button
+                type="button"
+                className={css.closeButton}
+                aria-label={maximized ? t('restore') : t('maximize')}
+                title={maximized ? t('restore') : t('maximize')}
+                onClick={() => { setMaximized(v => !v) }}
+              >
+                <IconFullscreenOutline16 size={14} />
+              </button>
+              <button type="button" className={css.closeButton} aria-label={t('close')} onClick={() => { setOpen(false) }}>
+                <IconCloseOutline16 size={14} />
+              </button>
+            </div>
           </div>
 
           <div className={css.crumbBar} role="navigation" aria-label={t('browserTitle')}>
@@ -275,8 +357,8 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
             </Tooltip>
           </div>
 
-          <div className={css.body}>
-            <div className={css.listArea}>
+          <div ref={bodyRef} className={css.body}>
+            <div className={css.listArea} style={listWidth === null ? undefined : { width: listWidth, flex: '0 0 auto' }}>
               {listState.status === 'loading' && (
                 <div className={css.status} role="status">{t('loading')}</div>
               )}
@@ -298,6 +380,14 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
                 <div className={css.status} role="status">{t('truncated')}</div>
               )}
             </div>
+
+            <div
+              className={css.resizer}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('resize')}
+              onMouseDown={startResize}
+            />
 
             <div className={css.previewArea}>
               {readState.status === 'idle' && (
@@ -331,10 +421,16 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
                       {pathCopied ? t('copied') : t('copyPath')}
                     </button>
                   </div>
-                  <pre className={css.preview}>
-                    {readState.content}
-                    {readState.truncated && <div className={css.previewTruncated}>{t('readTruncated')}</div>}
-                  </pre>
+                  <div className={css.previewWrap}>
+                    {isMarkdownFile(readState.path)
+                      ? <MarkdownPreview source={readState.content} />
+                      : (
+                        <pre className={css.preview}>
+                          {readState.content}
+                          {readState.truncated && <div className={css.previewTruncated}>{t('readTruncated')}</div>}
+                        </pre>
+                      )}
+                  </div>
                 </>
               )}
             </div>
