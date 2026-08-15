@@ -30,7 +30,25 @@ export interface FileBrowserInjected {
   read: (path: string) => Promise<RemoteResult<FileBrowserReadResult>>
   /** Localized dialog copy (this package's namespace). */
   t: TranslateNS<'file-browser'>
+  /**
+   * Register the dialog's open-at-path controller while it is mounted; the
+   * `fileBrowserOpener` service routes chat file opens through it.
+   */
+  registerController: (controller: FileBrowserOpenerController) => void
+  /** Unregister the controller on unmount (must be the same object registered). */
+  unregisterController: (controller: FileBrowserOpenerController) => void
 }
+
+/**
+ * The mounted dialog's open-at-path face: the side the opener service calls.
+ * The dialog navigates to a directory's own listing, or to a file's parent
+ * level with the file auto-previewed.
+ */
+export interface FileBrowserOpenerController {
+  /** Open the dialog at one Host-resolved absolute path. */
+  openAt(path: string): void
+}
+
 /** Full component props assembled by the sidebar footer-action slot renderer. */
 export type FileBrowserActionProps =
   PropsRuntime<'sidebar.footer.action'>
@@ -44,7 +62,7 @@ function failureText(error: unknown): string {
 
 /** Unwrap the carrier's RemoteResult and the business result into the value or an error message. */
 function unwrapRemote<T>(result: RemoteResult<T>): { ok: true; value: T } | { ok: false; message: string } {
-  if (!result.ok) return { ok: false, message: `remote error: ${result.error.code ?? 'unknown'}` }
+  if (!result.ok) return { ok: false, message: `remote error: ${result.error.code}` }
   return { ok: true, value: result.value }
 }
 
@@ -65,6 +83,20 @@ function relativePath(path: string, root: string): string {
   const prefix = root.endsWith('\\') || root.endsWith('/') ? root : `${root}${path.includes('\\') ? '\\' : '/'}`
   if (!path.startsWith(prefix)) return path.split(/[\\/]/).pop() ?? path
   return path.slice(prefix.length).replace(/\\/g, '/')
+}
+
+/**
+ * The parent directory of an absolute path, for either separator. A bare
+ * drive designator (`C:`) and separator-free paths return the input
+ * unchanged: the browser either lists such a target directly or fails on its
+ * own terms (a file's parent can never be a drive designator).
+ */
+function parentDirectory(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  if (at <= 0) return path
+  const parent = trimmed.slice(0, at)
+  return /^[A-Za-z]:$/.test(parent) ? path : parent
 }
 
 /** Whether a previewed file should render as Markdown (mermaid-capable). */
@@ -173,7 +205,7 @@ type ReadState =
  * @param props - slot owner share + injected browse calls + copy.
  * @returns the action button (always mounted) and the dialog (while open).
  */
-export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProps) {
+export function FileBrowserAction({ wide, list, read, t, registerController, unregisterController }: FileBrowserActionProps) {
   const [open, setOpen] = useState(false)
   // Maximized dialog state (toggled by the header fullscreen control).
   const [maximized, setMaximized] = useState(false)
@@ -191,6 +223,10 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const requestSeq = useRef(0)
+  // A controller-driven open (openAt) drives list/read itself; the open flip
+  // must not also refetch the stale level. The flag is consumed by the effect
+  // below on the very next run, so it can never swallow a later navigation.
+  const skipNextEffectLoad = useRef(false)
 
   const load = useCallback((path?: string) => {
     const seq = ++requestSeq.current
@@ -215,13 +251,98 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
   // Every open starts fresh at the workspace root; a close invalidates any
   // in-flight response so a late arrival cannot repopulate a closed dialog.
   useEffect(() => {
+    const skipped = skipNextEffectLoad.current
+    skipNextEffectLoad.current = false
     if (open) {
+      if (skipped) return
       load(currentPath)
       return
     }
     requestSeq.current += 1
     setReadState({ status: 'idle' })
   }, [open, load, currentPath])
+
+  /**
+   * The open-at-path controller face: probe the target as a directory (a
+   * listing succeeds), otherwise land on its parent level and auto-preview
+   * the file. Drives list/read directly so the dialog can open already
+   * positioned; the open-effect's own load is suppressed for that flip.
+   */
+  const openAt = useCallback((target: string) => {
+    if (!open) skipNextEffectLoad.current = true
+    setOpen(true)
+    const seq = ++requestSeq.current
+    setListState({ status: 'loading' })
+    setReadState({ status: 'idle' })
+    list(target).then((result) => {
+      if (seq !== requestSeq.current) return
+      const unwrapped = unwrapRemote(result)
+      if (unwrapped.ok && unwrapped.value.ok) {
+        // Directory target: its own listing IS the destination level.
+        setListState({ status: 'ready', listing: unwrapped.value.value })
+        return
+      }
+      // File target: list the parent for context, then preview the file.
+      const parent = parentDirectory(target)
+      list(parent).then((parentResult) => {
+        if (seq !== requestSeq.current) return
+        const parentUnwrapped = unwrapRemote(parentResult)
+        if (!parentUnwrapped.ok) {
+          setListState({ status: 'error', message: parentUnwrapped.message })
+          return
+        }
+        const parentBusiness = parentUnwrapped.value
+        if (!parentBusiness.ok) {
+          setListState({ status: 'error', message: parentBusiness.error.message })
+          return
+        }
+        setListState({ status: 'ready', listing: parentBusiness.value })
+        // The backend reads any absolute path, so a truncated or name-sorted
+        // listing cannot block the preview of the named file.
+        const readSeq = ++requestSeq.current
+        setReadState({ status: 'loading' })
+        read(target).then((readResult) => {
+          if (readSeq !== requestSeq.current) return
+          const readUnwrapped = unwrapRemote(readResult)
+          if (!readUnwrapped.ok) {
+            setReadState({ status: 'error', message: readUnwrapped.message })
+            return
+          }
+          const readBusiness = readUnwrapped.value
+          if (readBusiness.ok) {
+            setReadState({
+              status: 'ready',
+              path: readBusiness.value.path,
+              content: readBusiness.value.content,
+              truncated: readBusiness.value.truncated,
+            })
+          } else {
+            setReadState({ status: 'error', message: readBusiness.error.message })
+          }
+        }, (reason: unknown) => {
+          if (readSeq !== requestSeq.current) return
+          setReadState({ status: 'error', message: failureText(reason) })
+        })
+      }, (reason: unknown) => {
+        if (seq !== requestSeq.current) return
+        setListState({ status: 'error', message: failureText(reason) })
+      })
+    }, (reason: unknown) => {
+      if (seq !== requestSeq.current) return
+      setListState({ status: 'error', message: failureText(reason) })
+    })
+  }, [list, read, open])
+
+  // Register the controller once, forwarding through a ref so the service
+  // always reaches the latest callback without re-registering on identity
+  // churn. The opener service only exists while this dialog is mounted.
+  const openAtRef = useRef<FileBrowserOpenerController['openAt']>(() => {})
+  openAtRef.current = openAt
+  useEffect(() => {
+    const controller: FileBrowserOpenerController = { openAt: (path) => { openAtRef.current(path) } }
+    registerController(controller)
+    return () => { unregisterController(controller) }
+  }, [registerController, unregisterController])
 
   const openEntry = useCallback((entry: FileBrowserEntry) => {
     if (entry.kind === 'directory') {
@@ -323,7 +444,7 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
         onClose={() => { setOpen(false) }}
         closeLabel={t('close')}
         title={t('browserTitle')}
-        className={clsx(css.dialog, maximized && css.dialogMaximized) as string}
+        className={clsx(css.dialog, maximized && css.dialogMaximized)}
         headless
       >
         <div className={css.dialogBody}>
@@ -444,7 +565,7 @@ export function FileBrowserAction({ wide, list, read, t }: FileBrowserActionProp
                       className={css.copyButton}
                       aria-label={t('exportPdf')}
                       disabled={exporting}
-                      onClick={() => { void handleExportPdf() }}
+                      onClick={() => { handleExportPdf() }}
                     >
                       <IconDownloadOutline16 size={13} />
                       {exporting ? t('exporting') : t('exportPdf')}

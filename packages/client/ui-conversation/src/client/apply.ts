@@ -394,7 +394,13 @@ export function apply(ctx: Context): void {
         fileMentions: owner => ctx.get('chatFileMentions')?.forClosing(owner),
         openFile: (path) => {
           const cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd
-          void workspaces.openPath(resolveWorkspacePath(cwd, path)).catch(() => {
+          const resolved = resolveWorkspacePath(cwd, path)
+          // The in-app file browser (ui-file-browser) takes over when it is
+          // composed and its dialog is mounted; otherwise the Host opens the
+          // path natively (or its OS reveals the folder).
+          const opener = ctx.get('fileBrowserOpener')
+          if (opener !== undefined && opener.openAt(resolved)) return
+          void workspaces.openPath(resolved).catch(() => {
             // Host/OS open failures stay silent in the chat row; the native
             // app surfaces its own error dialog when the path is unusable.
           })

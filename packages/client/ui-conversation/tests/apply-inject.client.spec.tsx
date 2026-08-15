@@ -240,6 +240,33 @@ describe('conversation slot inject API', () => {
     await b.runtime.dispose()
   })
 
+  it('openFile routes into the in-app file browser when its opener accepts', async () => {
+    const b = await bench()
+    // ui-file-browser composed: its opener service accepts the open, so the
+    // native openPath must never run.
+    const openAt = vi.fn((_path: string) => true)
+    b.runtime.provide('fileBrowserOpener', { openAt })
+    const { injected } = b.chatViewApi(ROOT)
+    injected.openFile('src/a.ts')
+    expect(openAt).toHaveBeenCalledWith('/proj/src/a.ts')
+    expect(b.runtime.workspaces.calls).not.toContainEqual({ method: 'openPath', args: ['/proj/src/a.ts'] })
+    await b.runtime.dispose()
+  })
+
+  it('openFile falls back to workspaces.openPath when the browser opener declines', async () => {
+    const b = await bench()
+    // ui-file-browser composed but its dialog not mounted: openAt declines.
+    const openAt = vi.fn((_path: string) => false)
+    b.runtime.provide('fileBrowserOpener', { openAt })
+    const { injected } = b.chatViewApi(ROOT)
+    injected.openFile('src/a.ts')
+    expect(openAt).toHaveBeenCalledWith('/proj/src/a.ts')
+    await vi.waitFor(() => {
+      expect(b.runtime.workspaces.calls).toContainEqual({ method: 'openPath', args: ['/proj/src/a.ts'] })
+    })
+    await b.runtime.dispose()
+  })
+
   it('routes workspace switching through the runtime owner, carrying the draft', async () => {
     const b = await bench()
     const resident = b.residentApi(ROOT)

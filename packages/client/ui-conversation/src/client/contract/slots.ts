@@ -306,10 +306,30 @@ export interface ChatFileMentions {
   forClosing(owner: TurnTailOwnerProps): MarkdownFileMentions | undefined
 }
 
+/**
+ * Optional file-browser opener, consumed via `ctx.get('fileBrowserOpener')`
+ * (optional-service convention): the chat view routes `openFile` into the
+ * in-app file browser dialog when ui-file-browser is composed and its dialog
+ * is mounted. An absent service — or one whose dialog is not mounted
+ * (`openAt` returns false) — falls back to the Host's native path opener.
+ */
+export interface FileBrowserOpener {
+  /**
+   * Open the file browser dialog at `path`: a directory lands on its own
+   * listing, a file lands on its parent level with the file auto-previewed.
+   * @param path - Host-resolved absolute path.
+   * @returns true when the browser dialog accepted the open (it is mounted);
+   * false when the surface is unavailable and the caller should fall back.
+   */
+  openAt(path: string): boolean
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Prose file-mention provider (ui-deliverables); reach via ctx.get — optional. */
     chatFileMentions: ChatFileMentions
+    /** In-app file browser opener (ui-file-browser); reach via ctx.get — optional. */
+    fileBrowserOpener: FileBrowserOpener
   }
 }
 
