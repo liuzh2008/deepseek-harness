@@ -6,11 +6,12 @@
  * `fileBrowser` Remote. All paths are host-owned absolute paths; the client
  * never joins segments.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconChevronRightOutline14, IconCloseOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16,
-  IconFolderOpenOutline16, IconFullscreenOutline16, IconRefreshOutline16, Modal, Tooltip, writeClipboard,
+  Button, IconChecklistOutline14, IconChevronRightOutline14, IconCloseOutline16, IconCopyOutline16,
+  IconDownloadOutline16, IconFolderClose16, IconFolderOpenOutline16, IconFullscreenOutline16, IconPanelLeftOutline16,
+  IconRefreshOutline16, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   FileBrowserEntry, FileBrowserListing, FileBrowserListResult, FileBrowserReadResult,
@@ -18,7 +19,7 @@ import type {
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { PropsLocale, PropsRuntime, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-locale/client'
-import { MarkdownPreview } from './MarkdownPreview.tsx'
+import { MarkdownPreview, extractToc, type TocEntry } from './MarkdownPreview.tsx'
 import { exportPreviewToPdf } from './exportPdf.ts'
 import css from './FileBrowser.module.css'
 
@@ -105,34 +106,11 @@ function isMarkdownFile(path: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(base)
 }
 
-/** localStorage key for the user-adjusted list pane width (persisted across reloads). */
-const LIST_WIDTH_KEY = 'dsh.file-browser.listWidth'
-
-/** Read the persisted list width, or null when absent/invalid. */
-function readPersistedListWidth(): number | null {
-  if (typeof localStorage === 'undefined') return null
-  try {
-    const raw = localStorage.getItem(LIST_WIDTH_KEY)
-    if (raw === null) return null
-    const value = JSON.parse(raw) as unknown
-    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
-  } catch {
-    return null
-  }
-}
-
-/** Persist the list width; storage failures only disable persistence. */
-function writePersistedListWidth(value: number): void {
-  if (typeof localStorage === 'undefined') return
-  try {
-    localStorage.setItem(LIST_WIDTH_KEY, JSON.stringify(Math.round(value)))
-  } catch (error) {
-    console.error('file-browser: list width persistence failed:', error)
-  }
-}
-
 /** One row: the entry's icon, name, and (for files) size; folders get a
- *  copy-relative-path control beside the row (independent of open). */
+ *  copy-relative-path control beside the row (independent of open). The name
+ *  elides with ellipsis when the fixed list pane is narrower than it; a
+ *  delayed hover tooltip then carries the full name, enabled only while the
+ *  name is actually clipped. */
 function EntryRow({ entry, root, onOpen, t }: {
   entry: FileBrowserEntry
   root: string
@@ -141,51 +119,65 @@ function EntryRow({ entry, root, onOpen, t }: {
 }) {
   const isDir = entry.kind === 'directory'
   const [copied, setCopied] = useState(false)
+  const nameRef = useRef<HTMLSpanElement | null>(null)
+  const [nameClipped, setNameClipped] = useState(false)
+  useLayoutEffect(() => {
+    const el = nameRef.current
+    if (el === null) return
+    const measure = () => { setNameClipped(el.scrollWidth > el.clientWidth) }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => { observer.disconnect() }
+  }, [entry.name])
   return (
-    <button
-      type="button"
-      className={css.row}
-      data-kind={entry.kind}
-      aria-label={isDir ? `${t('directory')} ${entry.name}` : `${t('file')} ${entry.name}`}
-      onClick={() => { onOpen(entry) }}
-    >
-      {isDir
-        ? <IconFolderClose16 size={16} className={css.rowIcon} />
-        : <IconChevronRightOutline14 size={14} className={css.rowIcon} />}
-      <span className={css.rowName}>{entry.name}</span>
-      {isDir
-        ? (
-          <span
-            role="button"
-            tabIndex={0}
-            className={css.rowCopy}
-            aria-label={t('copyPath')}
-            title={t('copyPath')}
-            onClick={(event) => {
-              event.stopPropagation()
-              void writeClipboard(relativePath(entry.path, root)).then((ok) => {
-                if (!ok) return
-                setCopied(true)
-                window.setTimeout(() => { setCopied(false) }, 1000)
-              })
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return
-              event.preventDefault()
-              event.stopPropagation()
-              void writeClipboard(relativePath(entry.path, root)).then((ok) => {
-                if (!ok) return
-                setCopied(true)
-                window.setTimeout(() => { setCopied(false) }, 1000)
-              })
-            }}
-          >
-            <IconCopyOutline16 size={13} />
-            {copied ? t('copied') : ''}
-          </span>
-        )
-        : <span className={css.rowSize}>{formatBytes(entry.size)}</span>}
-    </button>
+    <Tooltip label={entry.name} side="right" delayMs={500} disabled={!nameClipped}>
+      <button
+        type="button"
+        className={css.row}
+        data-kind={entry.kind}
+        aria-label={isDir ? `${t('directory')} ${entry.name}` : `${t('file')} ${entry.name}`}
+        onClick={() => { onOpen(entry) }}
+      >
+        {isDir
+          ? <IconFolderClose16 size={16} className={css.rowIcon} />
+          : <IconChevronRightOutline14 size={14} className={css.rowIcon} />}
+        <span ref={nameRef} className={css.rowName}>{entry.name}</span>
+        {isDir
+          ? (
+            <span
+              role="button"
+              tabIndex={0}
+              className={css.rowCopy}
+              aria-label={t('copyPath')}
+              title={t('copyPath')}
+              onClick={(event) => {
+                event.stopPropagation()
+                void writeClipboard(relativePath(entry.path, root)).then((ok) => {
+                  if (!ok) return
+                  setCopied(true)
+                  window.setTimeout(() => { setCopied(false) }, 1000)
+                })
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                event.stopPropagation()
+                void writeClipboard(relativePath(entry.path, root)).then((ok) => {
+                  if (!ok) return
+                  setCopied(true)
+                  window.setTimeout(() => { setCopied(false) }, 1000)
+                })
+              }}
+            >
+              <IconCopyOutline16 size={13} />
+              {copied ? t('copied') : ''}
+            </span>
+          )
+          : <span className={css.rowSize}>{formatBytes(entry.size)}</span>}
+      </button>
+    </Tooltip>
   )
 }
 
@@ -209,9 +201,9 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
   const [open, setOpen] = useState(false)
   // Maximized dialog state (toggled by the header fullscreen control).
   const [maximized, setMaximized] = useState(false)
-  // List-pane width in px once the user drags the divider (null = default
-  // ratio); seeded from the persisted value so a reload restores the layout.
-  const [listWidth, setListWidth] = useState<number | null>(readPersistedListWidth)
+  // List pane visibility (toggled by the crumb-bar control; kept across
+  // dialog opens so a close/reopen within the session keeps the layout).
+  const [listHidden, setListHidden] = useState(false)
   const [listState, setListState] = useState<ListState>({ status: 'loading' })
   const [readState, setReadState] = useState<ReadState>({ status: 'idle' })
   // The level currently displayed (kept across dialog opens so navigation
@@ -222,6 +214,8 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
   // In-flight PDF export (disables the export button while running).
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  // Markdown table of contents panel visibility (only offered for markdown).
+  const [tocOpen, setTocOpen] = useState(false)
   const requestSeq = useRef(0)
   // A controller-driven open (openAt) drives list/read itself; the open flip
   // must not also refetch the stale level. The flag is consumed by the effect
@@ -261,6 +255,12 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
     requestSeq.current += 1
     setReadState({ status: 'idle' })
   }, [open, load, currentPath])
+
+  // A new previewed file closes any open table of contents panel.
+  const previewedPath = readState.status === 'ready' ? readState.path : undefined
+  useEffect(() => {
+    setTocOpen(false)
+  }, [previewedPath])
 
   /**
    * The open-at-path controller face: probe the target as a directory (a
@@ -376,39 +376,6 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
   const entries = listing?.entries ?? []
   const busy = listState.status === 'loading'
 
-  // Divider drag: the list pane takes a fixed pixel width while dragging
-  // (clamped to sane bounds); a null width keeps the default 52/48 ratio.
-  // The live width rides a ref so the mouseup handler persists the final
-  // value without stale closure state.
-  const bodyRef = useRef<HTMLDivElement | null>(null)
-  const liveListWidth = useRef(listWidth)
-  liveListWidth.current = listWidth
-  const startResize = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    const body = bodyRef.current
-    if (body === null) return
-    const startX = event.clientX
-    const startWidth = listWidth ?? body.getBoundingClientRect().width * 0.52
-    const onMove = (move: MouseEvent): void => {
-      const rect = body.getBoundingClientRect()
-      const next = startWidth + (move.clientX - startX)
-      const clamped = Math.min(Math.max(next, 160), rect.width - 240)
-      setListWidth(clamped)
-    }
-    const onUp = (): void => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      const settled = liveListWidth.current
-      if (settled !== null) writePersistedListWidth(settled)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-  }, [listWidth])
-
   // PDF export of the rendered preview (mermaid diagrams included). The
   // export targets the preview body element so only the file content lands
   // in the document.
@@ -423,6 +390,26 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
       if (!result.ok) setExportError(result.message)
     })
   }, [readState, exporting])
+
+  // Table of contents of the previewed markdown (empty for other files).
+  const toc = useMemo<TocEntry[]>(() => (
+    readState.status === 'ready' && isMarkdownFile(readState.path) ? extractToc(readState.content) : []
+  ), [readState])
+
+  // Scroll the rendered preview to the heading whose plain text matches the
+  // TOC entry (rendered headings carry no ids, so matching goes by text).
+  const scrollToHeading = useCallback((text: string) => {
+    const wrap = previewRef.current
+    if (wrap === null) return
+    const target = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    for (const heading of wrap.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+      const headingText = heading.textContent.replace(/\s+/g, ' ').trim().toLowerCase()
+      if (headingText === target) {
+        heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return
+      }
+    }
+  }, [])
 
   return (
     <>
@@ -484,6 +471,17 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
               </span>
             ))}
             <span className={css.crumbGap} />
+            <Tooltip label={listHidden ? t('showList') : t('hideList')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.refreshButton}
+                aria-label={listHidden ? t('showList') : t('hideList')}
+                aria-pressed={!listHidden}
+                onClick={() => { setListHidden(hidden => !hidden) }}
+              >
+                <IconPanelLeftOutline16 size={14} />
+              </button>
+            </Tooltip>
             <Tooltip label={t('refresh')} side="bottom" delayMs={500}>
               <button
                 type="button"
@@ -497,37 +495,31 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
             </Tooltip>
           </div>
 
-          <div ref={bodyRef} className={css.body}>
-            <div className={css.listArea} style={listWidth === null ? undefined : { width: listWidth, flex: '0 0 auto' }}>
-              {listState.status === 'loading' && (
-                <div className={css.status} role="status">{t('loading')}</div>
-              )}
-              {listState.status === 'error' && (
-                <div className={css.error} role="alert">
-                  <span>{t('error')} {listState.message}</span>
-                  <Button variant="outline" size="sm" onClick={() => { load(listing?.path) }}>
-                    {t('retry')}
-                  </Button>
-                </div>
-              )}
-              {listState.status === 'ready' && entries.length === 0 && (
-                <div className={css.status}>{t('empty')}</div>
-              )}
-              {listState.status === 'ready' && entries.map(entry => (
-                <EntryRow key={entry.path} entry={entry} root={listing?.root ?? ''} onOpen={openEntry} t={t} />
-              ))}
-              {listState.status === 'ready' && listing?.truncated === true && (
-                <div className={css.status} role="status">{t('truncated')}</div>
-              )}
-            </div>
-
-            <div
-              className={css.resizer}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t('resize')}
-              onMouseDown={startResize}
-            />
+          <div className={css.body}>
+            {!listHidden && (
+              <div className={css.listArea}>
+                {listState.status === 'loading' && (
+                  <div className={css.status} role="status">{t('loading')}</div>
+                )}
+                {listState.status === 'error' && (
+                  <div className={css.error} role="alert">
+                    <span>{t('error')} {listState.message}</span>
+                    <Button variant="outline" size="sm" onClick={() => { load(listing?.path) }}>
+                      {t('retry')}
+                    </Button>
+                  </div>
+                )}
+                {listState.status === 'ready' && entries.length === 0 && (
+                  <div className={css.status}>{t('empty')}</div>
+                )}
+                {listState.status === 'ready' && entries.map(entry => (
+                  <EntryRow key={entry.path} entry={entry} root={listing?.root ?? ''} onOpen={openEntry} t={t} />
+                ))}
+                {listState.status === 'ready' && listing?.truncated === true && (
+                  <div className={css.status} role="status">{t('truncated')}</div>
+                )}
+              </div>
+            )}
 
             <div className={css.previewArea}>
               {readState.status === 'idle' && (
@@ -544,6 +536,19 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
                   <div className={css.pathBar}>
                     <span className={css.pathLabel} title={readState.path}>{t('pathLabel')}</span>
                     <span className={css.pathValue}>{relativePath(readState.path, listing?.root ?? '')}</span>
+                    {isMarkdownFile(readState.path) && (
+                      <button
+                        type="button"
+                        className={clsx(css.copyButton, tocOpen && css.copyButtonActive)}
+                        aria-label={t('toc')}
+                        aria-pressed={tocOpen}
+                        disabled={toc.length === 0}
+                        onClick={() => { setTocOpen(open => !open) }}
+                      >
+                        <IconChecklistOutline14 size={13} />
+                        {t('toc')}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={css.copyButton}
@@ -574,15 +579,36 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
                   {exportError !== null && (
                     <div className={css.exportError} role="alert">{t('exportFailed')}: {exportError}</div>
                   )}
-                  <div ref={previewRef} className={css.previewWrap}>
-                    {isMarkdownFile(readState.path)
-                      ? <MarkdownPreview source={readState.content} />
-                      : (
-                        <pre className={css.preview}>
-                          {readState.content}
-                          {readState.truncated && <div className={css.previewTruncated}>{t('readTruncated')}</div>}
-                        </pre>
-                      )}
+                  <div className={css.previewBody}>
+                    {tocOpen && toc.length > 0 && (
+                      <nav className={css.tocPanel} aria-label={t('toc')}>
+                        <div className={css.tocTitle}>{t('toc')}</div>
+                        <div className={css.tocList}>
+                          {toc.map((entry, index) => (
+                            <button
+                              key={`${entry.level}-${index}`}
+                              type="button"
+                              className={css.tocItem}
+                              style={{ paddingLeft: `${10 + (entry.level - 1) * 12}px` }}
+                              title={entry.text}
+                              onClick={() => { scrollToHeading(entry.text) }}
+                            >
+                              {entry.text}
+                            </button>
+                          ))}
+                        </div>
+                      </nav>
+                    )}
+                    <div ref={previewRef} className={css.previewWrap}>
+                      {isMarkdownFile(readState.path)
+                        ? <MarkdownPreview source={readState.content} />
+                        : (
+                          <pre className={css.preview}>
+                            {readState.content}
+                            {readState.truncated && <div className={css.previewTruncated}>{t('readTruncated')}</div>}
+                          </pre>
+                        )}
+                    </div>
                   </div>
                 </>
               )}

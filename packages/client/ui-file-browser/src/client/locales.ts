@@ -25,10 +25,12 @@ export const zh = {
   pathLabel: '相对路径',
   maximize: '最大化',
   restore: '还原',
-  resize: '调整列表宽度',
+  hideList: '隐藏文件列表',
+  showList: '显示文件列表',
   exportPdf: '导出 PDF',
   exporting: '导出中…',
   exportFailed: '导出失败',
+  toc: '目录',
 } satisfies Record<string, string>
 
 /** File browser locale key union. */
@@ -59,8 +61,10 @@ export const en = {
   pathLabel: 'Relative path',
   maximize: 'Maximize',
   restore: 'Restore',
-  resize: 'Resize list pane',
+  hideList: 'Hide file list',
+  showList: 'Show file list',
   exportPdf: 'Export PDF',
   exporting: 'Exporting…',
   exportFailed: 'Export failed',
+  toc: 'TOC',
 } satisfies Record<FileBrowserLocaleKey, string>
