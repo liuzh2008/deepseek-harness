@@ -94,6 +94,11 @@
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
 
+    # Read-only project file browser: directory listing with files and text
+    # preview, confined to the workspace root; the browser half drives it.
+    - id: file-browser
+      name: '@deepseek-ai/dsh-host-file-browser'
+
     # The API gateway: the transport-agnostic dispatch face every client shape
     # shares. The base layer's agent-default-model service owns the default model.
     - id: api-gateway
@@ -134,6 +139,7 @@
         printUrl: true
         surfaceContext: true
         trustedHosts: !!js ctx.webStartup.trustedHosts
+        allowRemotePrivilegedMethods: !!js ctx.webStartup.allowRemotePrivilegedMethods
 
     # The client-plugin reload chain, always mounted: it is idle until a
     # rebuild watcher (pnpm run dev:web) actually rewrites client bundles. It
@@ -161,6 +167,12 @@
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
         trustedHosts: !!js ctx.webRuntime.trustedHosts
+        # Off by default: privileged methods (settings, credentials,
+        # agent-preset authoring, native dialogs) stay loopback-pinned. Set
+        # --allow-remote-privileged-methods to widen that pin to the trusted
+        # authorities above — the explicit opt-out for a deployment that
+        # serves a trusted LAN/VPN and needs its settings editable remotely.
+        allowRemotePrivilegedMethods: !!js ctx.webRuntime.allowRemotePrivilegedMethods
 
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'
@@ -272,6 +284,11 @@
 
     - id: ui-trajectory
       name: '@deepseek-ai/dsh-client-ui-trajectory'
+
+    # Sidebar file browser: a footer-action button opening the project file
+    # browser dialog over the host fileBrowser Remote.
+    - id: ui-file-browser
+      name: '@deepseek-ai/dsh-client-ui-file-browser'
 
 # ── the agent plane moves behind agent presets ─────────────────────────────
 #
