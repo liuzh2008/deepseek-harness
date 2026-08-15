@@ -12,7 +12,7 @@ New Session 会启动运行时的页面局部前端 Session Intent。运行时�
 
 栏内的滚动条是一种指针可供性：只要指针不在栏内，外壳就把 ui-theme 的[滚动条间接层](../ui-theme/README.md)重新绑定为 `transparent`；指针离开后滑块再保留 2 秒，因此没人指向的列表不会带着滚动条。避免行位移的空间预留属于滚动区域本身（[ui-workspace](../ui-workspace/README.md)），所以显示滑块不会引起重排。
 
-页脚承载 `sidebar.settings`：侧边栏只渲染固定在底部的布局 slot，并共享其栏状态（`wide`）；ui-settings 在此注册触发行和设置面板。
+页脚是一行：`sidebar.settings` 席位——ui-settings 在此注册触发行和设置面板——旁边是可选 `sidebar.footer.action` 条目（如文件浏览器）。侧边栏与两者共享其栏状态（`wide`）。
 
 `/client` 导出表层只包含插件主体（`apply`／`inject`）及约定类型；SidebarRoot、行组件和树派生仍由 slot 注册封装在包内。
 

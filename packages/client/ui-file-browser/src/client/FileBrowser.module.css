@@ -1,33 +1,44 @@
+/* The footer action borrows the Settings trigger's geometry wholesale so the
+   two controls read as one row (expanded: 34px labeled row; collapsed rail:
+   36px circle). */
 .actionButton {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 8px;
+  justify-content: center;
+  gap: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  box-sizing: border-box;
   border: none;
-  border-radius: 6px;
+  border-radius: 50%;
   background: transparent;
-  color: var(--dsw-color-text-secondary);
   cursor: pointer;
-  font: inherit;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
   white-space: nowrap;
 }
 
 .actionButton:hover {
-  background: var(--dsw-color-hover);
-  color: var(--dsw-color-text-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* Rail state: a 36px square control beside the settings trigger. */
+/* Expanded: the same 34px row as the settings trigger (icon + label). */
 .actionButtonWide {
-  height: 36px;
-  width: 36px;
-  justify-content: center;
-  padding: 0;
+  width: auto;
+  height: 34px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 12px;
 }
 
 .actionLabel {
-  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 /* Headless Modal card: fill the fixed-size dialog and let the inner body

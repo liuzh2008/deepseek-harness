@@ -241,27 +241,31 @@
   padding-left: 0;
 }
 
-/* Footer seats: additive actions stack above Settings. Each occupant owns its
-   button geometry and hover chrome. */
+/* Footer row: additive actions sit beside Settings in both sidebar widths.
+   Each occupant owns its button geometry and hover chrome. */
 .footArea {
   flex: none;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
 }
 
-.settingsArea,
 .footerActions {
   flex: none;
   min-width: 0;
-  width: 100%;
+  display: flex;
 }
 
-.footerActions {
-  display: flex;
+.settingsArea {
+  flex: 1;
+  min-width: 0;
 }
 
 .collapsed .footArea {
   align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .collapsed .settingsArea,
