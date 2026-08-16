@@ -111,11 +111,13 @@ function isMarkdownFile(path: string): boolean {
  *  elides with ellipsis when the fixed list pane is narrower than it; a
  *  delayed hover tooltip then carries the full name, enabled only while the
  *  name is actually clipped. */
-function EntryRow({ entry, root, onOpen, t }: {
+function EntryRow({ entry, root, onOpen, t, selected }: {
   entry: FileBrowserEntry
   root: string
   onOpen: (entry: FileBrowserEntry) => void
   t: TranslateNS<'file-browser'>
+  /** Whether this row is the currently selected entry (its file is previewed). */
+  selected: boolean
 }) {
   const isDir = entry.kind === 'directory'
   const [copied, setCopied] = useState(false)
@@ -135,7 +137,9 @@ function EntryRow({ entry, root, onOpen, t }: {
     <Tooltip label={entry.name} side="right" delayMs={500} disabled={!nameClipped}>
       <button
         type="button"
-        className={css.row}
+        className={clsx(css.row, selected && css.rowSelected)}
+        data-selected={selected || undefined}
+        aria-current={selected ? 'true' : undefined}
         data-kind={entry.kind}
         aria-label={isDir ? `${t('directory')} ${entry.name}` : `${t('file')} ${entry.name}`}
         onClick={() => { onOpen(entry) }}
@@ -209,6 +213,10 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
   // The level currently displayed (kept across dialog opens so navigation
   // state survives a close/reopen within the same page session).
   const [currentPath, setCurrentPath] = useState<string | undefined>(undefined)
+  // The entry whose file is previewed (or the directory openAt landed on);
+  // its listing row renders selected. Kept across opens so a revisit of the
+  // same level restores the highlight.
+  const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined)
   // Post-copy confirmation for the relative-path button (1s window).
   const [pathCopied, setPathCopied] = useState(false)
   // In-flight PDF export (disables the export button while running).
@@ -279,6 +287,7 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
       const unwrapped = unwrapRemote(result)
       if (unwrapped.ok && unwrapped.value.ok) {
         // Directory target: its own listing IS the destination level.
+        setSelectedPath(target)
         setListState({ status: 'ready', listing: unwrapped.value.value })
         return
       }
@@ -300,6 +309,7 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
         // The backend reads any absolute path, so a truncated or name-sorted
         // listing cannot block the preview of the named file.
         const readSeq = ++requestSeq.current
+        setSelectedPath(target)
         setReadState({ status: 'loading' })
         read(target).then((readResult) => {
           if (readSeq !== requestSeq.current) return
@@ -345,6 +355,7 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
   }, [registerController, unregisterController])
 
   const openEntry = useCallback((entry: FileBrowserEntry) => {
+    setSelectedPath(entry.path)
     if (entry.kind === 'directory') {
       setCurrentPath(entry.path)
       load(entry.path)
@@ -513,7 +524,14 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
                   <div className={css.status}>{t('empty')}</div>
                 )}
                 {listState.status === 'ready' && entries.map(entry => (
-                  <EntryRow key={entry.path} entry={entry} root={listing?.root ?? ''} onOpen={openEntry} t={t} />
+                  <EntryRow
+                    key={entry.path}
+                    entry={entry}
+                    root={listing?.root ?? ''}
+                    onOpen={openEntry}
+                    t={t}
+                    selected={entry.path === selectedPath}
+                  />
                 ))}
                 {listState.status === 'ready' && listing?.truncated === true && (
                   <div className={css.status} role="status">{t('truncated')}</div>
