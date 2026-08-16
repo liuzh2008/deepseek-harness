@@ -397,6 +397,12 @@
   background: var(--dsw-color-hover);
 }
 
+/* The selected entry (its file is previewed) reads stronger than a hover. */
+.rowSelected,
+.rowSelected:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent, var(--dsw-alias-interactive-bg-hover));
+}
+
 .rowIcon {
   color: var(--dsw-color-text-tertiary);
   flex-shrink: 0;

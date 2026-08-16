@@ -112,6 +112,10 @@ describe('FileBrowserAction open-at-path controller', () => {
     // The file's own listing row and its preview both land.
     expect(screen.getByText('report.txt')).toBeTruthy()
     expect(screen.getByText('hello world')).toBeTruthy()
+    // The previewed file's row is the selected one in the list.
+    const row = screen.getByRole('button', { name: 'file report.txt' })
+    expect(row.getAttribute('data-selected')).toBe('true')
+    expect(row.getAttribute('aria-current')).toBe('true')
     // The preview path bar shows the workspace-relative spelling.
     expect(screen.getByText('notes/report.txt')).toBeTruthy()
     expect(read).toHaveBeenCalledWith('/w/notes/report.txt')
@@ -168,6 +172,28 @@ describe('FileBrowserAction open-at-path controller', () => {
     // No file was named: the preview pane stays on its idle hint.
     expect(read).not.toHaveBeenCalled()
     expect(screen.getByText('openFile')).toBeTruthy()
+  })
+
+  it('selects the row whose file the user clicks in the list', async () => {
+    const { controller, read } = mountAction({
+      list: vi.fn((path?: string) => {
+        expect(path).toBe('/w/src')
+        return Promise.resolve(remoteOk(businessOk(listing('/w/src', '/w', [
+          fileEntry('a.txt', '/w/src/a.txt'),
+          fileEntry('b.txt', '/w/src/b.txt'),
+        ]))))
+      }),
+      read: vi.fn((path: string) => Promise.resolve(remoteOk(businessOk({ path, content: `content of ${path}`, truncated: false, bytes: 4 })))),
+    })
+    controller.openAt('/w/src')
+    await screen.findByRole('dialog')
+    // No row is selected until one is opened.
+    expect(screen.getByRole('button', { name: 'file a.txt' }).getAttribute('data-selected')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'file b.txt' }))
+    await screen.findByText('content of /w/src/b.txt')
+    expect(read).toHaveBeenCalledWith('/w/src/b.txt')
+    expect(screen.getByRole('button', { name: 'file b.txt' }).getAttribute('data-selected')).toBe('true')
+    expect(screen.getByRole('button', { name: 'file a.txt' }).getAttribute('data-selected')).toBeNull()
   })
 
   it('hides and restores the file list via the crumb-bar toggle', async () => {
