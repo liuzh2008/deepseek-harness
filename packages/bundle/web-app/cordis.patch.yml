@@ -142,6 +142,7 @@
         printUrl: true
         surfaceContext: true
         trustedHosts: !!js ctx.webStartup.trustedHosts
+        allowRemotePrivilegedMethods: !!js ctx.webStartup.allowRemotePrivilegedMethods
 
     # The client-plugin reload chain, always mounted: it is idle until a
     # rebuild watcher (pnpm run dev:web) actually rewrites client bundles. It
@@ -169,6 +170,12 @@
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
         trustedHosts: !!js ctx.webRuntime.trustedHosts
+        # Off by default: privileged methods (settings, credentials,
+        # agent-preset authoring, native dialogs) stay loopback-pinned. Set
+        # --allow-remote-privileged-methods to widen that pin to the trusted
+        # authorities above — the explicit opt-out for a deployment that
+        # serves a trusted LAN/VPN and needs its settings editable remotely.
+        allowRemotePrivilegedMethods: !!js ctx.webRuntime.allowRemotePrivilegedMethods
 
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'
