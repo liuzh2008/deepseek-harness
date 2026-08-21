@@ -444,9 +444,14 @@ export class ClientModuleRegistry extends Service {
     }
     try {
       const body = await readFile(path)
+      // The bundle URL already carries the content-hash rev
+      // (`/plugins/<id>/client.js?rev=<sha1>`), so a rebuilt bundle changes the
+      // URL and invalidates this cache entry. Immutable long caching turns every
+      // reload after the first into a zero-request hit instead of re-downloading
+      // ~10 MB of client bundles (source maps follow the same rev).
       res.writeHead(200, {
         'content-type': isSourceMap ? 'application/json; charset=utf-8' : 'text/javascript; charset=utf-8',
-        'cache-control': 'no-cache',
+        'cache-control': 'public, max-age=31536000, immutable',
       })
       res.end(body)
     } catch {

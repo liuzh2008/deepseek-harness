@@ -68,7 +68,9 @@ export async function serveStatic(
   }
   const serveIndex = async (): Promise<void> => {
     const body = await renderIndex()
-    res.writeHead(200, { 'content-type': MIME['.html'] })
+    // The index is the SPA entry and carries the dynamically injected boot
+    // manifest, so it must be revalidated on every load — never long-cached.
+    res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' })
     res.end(body)
   }
   if (target === distRoot || target === distIndex) {
@@ -77,7 +79,16 @@ export async function serveStatic(
   }
   try {
     const body = await readFile(target)
-    res.writeHead(200, { 'content-type': MIME[extname(target)] ?? 'application/octet-stream' })
+    // Hashed build assets under /assets/ (index-<hash>.js/css, vendor-*.js) are
+    // content-addressed: a rebuild changes the filename, so immutable long
+    // caching is safe and turns reloads into zero-request hits. Everything else
+    // (manifest.webmanifest, favicon, ...) stays revalidated to avoid stale
+    // metadata after an update.
+    const hashed = pathname.startsWith('/assets/')
+    res.writeHead(200, {
+      'content-type': MIME[extname(target)] ?? 'application/octet-stream',
+      'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+    })
     res.end(body)
   } catch {
     // Miss (ENOENT/EISDIR) falls back to index.html with 200 (SPA routing).
