@@ -76,13 +76,22 @@ export async function serveStatic(
   }
   let body: string | Buffer
   let type: string
+  let cacheControl: string
   try {
     if (target === distRoot || target === distIndex) {
       body = await renderIndex()
       type = HTML_MIME
+      // index.html carries the injected boot manifest (window.__DSH_BOOT__), so
+      // it must always be revalidated — never served from cache across reloads.
+      cacheControl = 'no-cache'
     } else {
       body = await readFile(target)
       type = MIME[extname(target)] ?? 'application/octet-stream'
+      // Built assets ship under content-hashed filenames (index-*.js,
+      // vendor-*.js, assets/langs/*.js, *.css, fonts, …), so a stable URL means
+      // byte-identical content: a long immutable cache makes reloads hit the
+      // browser cache instead of re-downloading the shell.
+      cacheControl = 'public, max-age=31536000, immutable'
     }
   } catch (error) {
     // Only absent or non-file targets are 404; other filesystem failures reach
@@ -92,7 +101,7 @@ export async function serveStatic(
     res.end()
     return
   }
-  res.writeHead(200, { 'content-type': type })
+  res.writeHead(200, { 'content-type': type, 'cache-control': cacheControl })
   res.end(body)
 }
 

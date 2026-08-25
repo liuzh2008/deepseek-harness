@@ -554,7 +554,12 @@ export class ClientModuleRegistry extends Service {
       const body = await readFile(path)
       res.writeHead(200, {
         'content-type': isSourceMap ? 'application/json; charset=utf-8' : 'text/javascript; charset=utf-8',
-        'cache-control': 'no-cache',
+        // The bundle URL carries its content hash as ?rev=, so a stable URL
+        // always means byte-identical content: let browsers reuse it without
+        // revalidation. Any content change (HMR rebuilt, restart re-hash)
+        // mints a new rev → new URL → fresh fetch, so the long cache never
+        // serves stale code.
+        'cache-control': 'public, max-age=31536000, immutable',
       })
       res.end(body)
     } catch {

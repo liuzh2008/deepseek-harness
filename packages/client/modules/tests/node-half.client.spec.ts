@@ -240,7 +240,9 @@ describe('client bundle activation', () => {
     expect(status).toBe(200)
     expect(headers).toEqual({
       'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-cache',
+      // Bundle URLs carry the content hash as ?rev=, so the long immutable
+      // cache is safe: a changed bundle mints a new URL.
+      'cache-control': 'public, max-age=31536000, immutable',
     })
     expect(body).toBe(map)
   })

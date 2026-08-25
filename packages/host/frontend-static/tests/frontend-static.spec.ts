@@ -74,12 +74,21 @@ async function loadComposition(): Promise<Context> {
   return context
 }
 
-/** GET (by default) one path against the running server; returns status, content-type, and a body prefix. */
-async function request(port: number, path: string, init?: RequestInit): Promise<{ status: number; type: string | null; body: string }> {
+/**
+ * GET (by default) one path against the running server; returns status,
+ * content-type, cache-control, and a body prefix.
+ */
+async function request(port: number, path: string, init?: RequestInit): Promise<{
+  status: number
+  type: string | null
+  cache: string | null
+  body: string
+}> {
   const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, init)
   return {
     status: response.status,
     type: response.headers.get('content-type'),
+    cache: response.headers.get('cache-control'),
     body: (await response.text()).slice(0, 80),
   }
 }
@@ -95,11 +104,19 @@ describe('real Loader composition', () => {
     const port = server.port
 
     // Real assets with their MIME types; a live rebuild is served on the next read.
-    expect(await request(port, '/app.js')).toMatchObject({ status: 200, type: 'text/javascript; charset=utf-8', body: 'export {}' })
+    // Content-hashed asset URLs are immutable: browsers may cache them long-term.
+    const assetCache = 'public, max-age=31536000, immutable'
+    expect(await request(port, '/app.js')).toMatchObject({
+      status: 200,
+      type: 'text/javascript; charset=utf-8',
+      body: 'export {}',
+      cache: assetCache,
+    })
     expect(await request(port, '/manifest.webmanifest')).toMatchObject({
       status: 200,
       type: 'application/manifest+json',
       body: '{}',
+      cache: assetCache,
     })
     expect(await request(port, '/app.js', { method: 'HEAD' })).toEqual({
       status: 200,
@@ -110,14 +127,22 @@ describe('real Loader composition', () => {
     expect(await request(port, '/app.js')).toMatchObject({ status: 200, body: 'export const rebuilt = true' })
 
     // Unknown extension ships as octet-stream.
-    expect(await request(port, '/blob.bin')).toMatchObject({ status: 200, type: 'application/octet-stream', body: 'BLOB' })
+    expect(await request(port, '/blob.bin')).toMatchObject({
+      status: 200,
+      type: 'application/octet-stream',
+      body: 'BLOB',
+      cache: assetCache,
+    })
 
-    // Only the root and index path render index.html through registered taps.
+    // `/`, the index path, and any configured index entry render index.html
+    // through the registered taps. index.html carries the injected boot
+    // manifest, so it must never be cached across reloads.
     const untap = server.tapIndex(html => html.replace('<head>', '<head><script>window.__T__=1</script>'))
     for (const path of ['/', '/index.html', '/?fixture']) {
       const got = await request(port, path)
       expect(got.status).toBe(200)
       expect(got.type).toBe('text/html; charset=utf-8')
+      expect(got.cache).toBe('no-cache')
       expect(got.body).toContain('__T__')
       expect(got.body).toContain('shell')
     }
