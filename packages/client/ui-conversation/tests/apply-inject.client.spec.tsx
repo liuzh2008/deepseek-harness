@@ -243,12 +243,11 @@ describe('conversation slot inject API', () => {
     await b.runtime.dispose()
   })
 
-  it('openFile swallows a Host open failure (no opener composed)', async () => {
+  it('openFile rejects when the Host cannot open the path', async () => {
     const b = await bench()
     b.runtime.workspaces.stub('openPath', () => Promise.reject(new Error('xdg-open is not available')))
     const { injected } = b.chatViewApi(ROOT)
-    // The chat row stays silent: no opener, no throw.
-    await expect(injected.openFile('src/a.ts')).resolves.toBeUndefined()
+    await expect(injected.openFile('src/a.ts')).rejects.toThrow('xdg-open is not available')
     await b.runtime.dispose()
   })
 
