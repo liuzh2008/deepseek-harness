@@ -57,6 +57,12 @@ export class WorkspaceRuntime implements IWorkspaces {
   private readonly connecting = new Map<WorkspaceId, Promise<SessionId>>()
   /** Guards the runtime-owned one-shot initial-selection subscription. */
   private initialSelectionStarted = false
+  /**
+   * Guards auto-creation triggered by archiving the current session: prevents
+   * a projection re-entry (clear → notify → project) from scheduling duplicate
+   * creates while one is already in flight.
+   */
+  private autoCreating = false
 
   /**
    * @param ctx - client root context.
@@ -340,7 +346,24 @@ export class WorkspaceRuntime implements IWorkspaces {
     // changed frame, and a reconnect baseline restoring a persisted
     // selection that was archived while this client was away.
     if (sessions.current !== undefined && workspace.archivedSessionIds.includes(sessions.current)) {
+      const archivedCurrentId = sessions.current
       this.sessions.clear()
+      // Auto-replace the stuck-or-stale archived session with a fresh blank
+      // session in the same Workspace so the user is never stranded on the
+      // empty view after archiving. The connecting map coalesces overlapping
+      // creates, and the autoCreating guard prevents projection re-entry
+      // (clear → notify → project) from scheduling duplicates.
+      if (!this.autoCreating) {
+        const wsId = workspace.items.find(item => item.sessionIds.includes(archivedCurrentId))?.workspaceId
+          ?? (baselinesReady ? recentWorkspace(workspace.items, sessions.byId) : undefined)
+        if (wsId !== undefined) {
+          this.autoCreating = true
+          void this.connectWorkspace(wsId).then(
+            (sessionId) => { this.sessions.open(sessionId) },
+            (reason: unknown) => { console.warn('auto-create after archive failed:', reason) },
+          ).finally(() => { this.autoCreating = false })
+        }
+      }
     }
     this.list.set({
       items: workspace.items,
