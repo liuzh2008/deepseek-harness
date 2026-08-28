@@ -106,3 +106,30 @@ export type FileBrowserListResult =
 export type FileBrowserReadResult =
   | FileBrowserSuccess<FileBrowserReadValue>
   | FileBrowserRejected
+
+/** Resolve one file's preview content URL. */
+export interface FileBrowserContentUrlRequest {
+  /** Absolute path of the file to serve raw content for. */
+  readonly path: string
+}
+
+/** Content URL of one file, for browser rendering (images and web pages). */
+export interface FileBrowserContentUrlValue {
+  /** Absolute path the URL was minted for. */
+  readonly path: string
+  /**
+   * Same-origin relative URL serving the file's raw bytes. The browser half
+   * resolves it against the page origin; an HTML page's relative references
+   * (images, scripts, stylesheets) resolve back into the same content route.
+   */
+  readonly url: string
+  /** Total file size in bytes. */
+  readonly bytes: number
+  /** MIME type the content route answers with for this file. */
+  readonly mime: string
+}
+
+/** Result returned by the file-browser `contentUrl` operation. */
+export type FileBrowserContentUrlResult =
+  | FileBrowserSuccess<FileBrowserContentUrlValue>
+  | FileBrowserRejected

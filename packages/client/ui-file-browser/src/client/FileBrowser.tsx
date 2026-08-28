@@ -14,7 +14,7 @@ import {
   IconRefreshOutline16, Modal, Tooltip, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  FileBrowserEntry, FileBrowserListing, FileBrowserListResult, FileBrowserReadResult,
+  FileBrowserContentUrlResult, FileBrowserEntry, FileBrowserListing, FileBrowserListResult, FileBrowserReadResult,
 } from '@deepseek-ai/dsh-host-file-browser/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { PropsLocale, PropsRuntime, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
@@ -29,6 +29,8 @@ export interface FileBrowserInjected {
   list: (path?: string) => Promise<RemoteResult<FileBrowserListResult>>
   /** Read one text file's bounded preview. */
   read: (path: string) => Promise<RemoteResult<FileBrowserReadResult>>
+  /** Resolve one file's same-origin content URL (for images and web pages). */
+  contentUrl: (path: string) => Promise<RemoteResult<FileBrowserContentUrlResult>>
   /** Localized dialog copy (this package's namespace). */
   t: TranslateNS<'file-browser'>
   /**
@@ -104,6 +106,25 @@ function parentDirectory(path: string): string {
 function isMarkdownFile(path: string): boolean {
   const base = path.split(/[\\/]/).pop() ?? path
   return /\.(md|markdown|mdx)$/i.test(base)
+}
+
+/** Whether a previewed file should render as an image element. */
+function isImageFile(path: string): boolean {
+  const base = path.split(/[\\/]/).pop() ?? path
+  return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|tiff?)$/i.test(base)
+}
+
+/** Whether a previewed file should render as a web page (iframe). */
+function isHtmlFile(path: string): boolean {
+  const base = path.split(/[\\/]/).pop() ?? path
+  return /\.(html?|xhtml)$/i.test(base)
+}
+
+/** Resolve a content-route relative URL against the page origin. */
+function contentUrlAbsolute(relative: string): string {
+  const location = (globalThis as { location?: { origin?: string } }).location
+  const origin = location?.origin !== undefined && location.origin !== 'null' ? location.origin : ''
+  return `${origin}${relative.startsWith('/') ? relative : `/${relative}`}`
 }
 
 /** One row: the entry's icon, name, and (for files) size; folders get a
@@ -196,12 +217,18 @@ type ReadState =
   | { status: 'error'; message: string }
   | { status: 'ready'; path: string; content: string; truncated: boolean }
 
+type ContentUrlState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; path: string; url: string }
+
 /**
  * Render the footer action button and the file browser dialog.
  * @param props - slot owner share + injected browse calls + copy.
  * @returns the action button (always mounted) and the dialog (while open).
  */
-export function FileBrowserAction({ wide, list, read, t, registerController, unregisterController }: FileBrowserActionProps) {
+export function FileBrowserAction({ wide, list, read, contentUrl, t, registerController, unregisterController }: FileBrowserActionProps) {
   const [open, setOpen] = useState(false)
   // Maximized dialog state (toggled by the header fullscreen control).
   const [maximized, setMaximized] = useState(false)
@@ -210,6 +237,10 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
   const [listHidden, setListHidden] = useState(false)
   const [listState, setListState] = useState<ListState>({ status: 'loading' })
   const [readState, setReadState] = useState<ReadState>({ status: 'idle' })
+  // Content-URL preview state (images and web pages; text files never use it).
+  const [contentUrlState, setContentUrlState] = useState<ContentUrlState>({ status: 'idle' })
+  // Whether the previewed image failed to load (renders a fallback hint).
+  const [imageFailed, setImageFailed] = useState(false)
   // The level currently displayed (kept across dialog opens so navigation
   // state survives a close/reopen within the same page session).
   const [currentPath, setCurrentPath] = useState<string | undefined>(undefined)
@@ -234,6 +265,7 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
     const seq = ++requestSeq.current
     setListState({ status: 'loading' })
     setReadState({ status: 'idle' })
+    setContentUrlState({ status: 'idle' })
     list(path).then((result) => {
       if (seq !== requestSeq.current) return
       const unwrapped = unwrapRemote(result)
@@ -265,10 +297,62 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
   }, [open, load, currentPath])
 
   // A new previewed file closes any open table of contents panel.
-  const previewedPath = readState.status === 'ready' ? readState.path : undefined
+  const closedOn = readState.status === 'ready' ? readState.path : contentUrlState.status === 'ready' ? contentUrlState.path : undefined
   useEffect(() => {
     setTocOpen(false)
-  }, [previewedPath])
+  }, [closedOn])
+
+  /**
+   * Preview one file: images and web pages resolve a content URL and render
+   * directly (no text read); every other file reads its bounded UTF-8 text
+   * preview. Sequence-guarded like the list/read calls so a stale response
+   * can never overwrite a newer navigation.
+   */
+  const previewFile = useCallback((path: string) => {
+    const seq = ++requestSeq.current
+    setImageFailed(false)
+    if (isImageFile(path) || isHtmlFile(path)) {
+      setReadState({ status: 'idle' })
+      setContentUrlState({ status: 'loading' })
+      contentUrl(path).then((result) => {
+        if (seq !== requestSeq.current) return
+        const unwrapped = unwrapRemote(result)
+        if (!unwrapped.ok) {
+          setContentUrlState({ status: 'error', message: unwrapped.message })
+          return
+        }
+        const business = unwrapped.value
+        if (business.ok) {
+          setContentUrlState({ status: 'ready', path: business.value.path, url: business.value.url })
+        } else {
+          setContentUrlState({ status: 'error', message: business.error.message })
+        }
+      }, (reason: unknown) => {
+        if (seq !== requestSeq.current) return
+        setContentUrlState({ status: 'error', message: failureText(reason) })
+      })
+      return
+    }
+    setContentUrlState({ status: 'idle' })
+    setReadState({ status: 'loading' })
+    read(path).then((result) => {
+      if (seq !== requestSeq.current) return
+      const unwrapped = unwrapRemote(result)
+      if (!unwrapped.ok) {
+        setReadState({ status: 'error', message: unwrapped.message })
+        return
+      }
+      const business = unwrapped.value
+      if (business.ok) {
+        setReadState({ status: 'ready', path: business.value.path, content: business.value.content, truncated: business.value.truncated })
+      } else {
+        setReadState({ status: 'error', message: business.error.message })
+      }
+    }, (reason: unknown) => {
+      if (seq !== requestSeq.current) return
+      setReadState({ status: 'error', message: failureText(reason) })
+    })
+  }, [read, contentUrl])
 
   /**
    * The open-at-path controller face: probe the target as a directory (a
@@ -308,31 +392,8 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
         setListState({ status: 'ready', listing: parentBusiness.value })
         // The backend reads any absolute path, so a truncated or name-sorted
         // listing cannot block the preview of the named file.
-        const readSeq = ++requestSeq.current
         setSelectedPath(target)
-        setReadState({ status: 'loading' })
-        read(target).then((readResult) => {
-          if (readSeq !== requestSeq.current) return
-          const readUnwrapped = unwrapRemote(readResult)
-          if (!readUnwrapped.ok) {
-            setReadState({ status: 'error', message: readUnwrapped.message })
-            return
-          }
-          const readBusiness = readUnwrapped.value
-          if (readBusiness.ok) {
-            setReadState({
-              status: 'ready',
-              path: readBusiness.value.path,
-              content: readBusiness.value.content,
-              truncated: readBusiness.value.truncated,
-            })
-          } else {
-            setReadState({ status: 'error', message: readBusiness.error.message })
-          }
-        }, (reason: unknown) => {
-          if (readSeq !== requestSeq.current) return
-          setReadState({ status: 'error', message: failureText(reason) })
-        })
+        previewFile(target)
       }, (reason: unknown) => {
         if (seq !== requestSeq.current) return
         setListState({ status: 'error', message: failureText(reason) })
@@ -341,7 +402,7 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
       if (seq !== requestSeq.current) return
       setListState({ status: 'error', message: failureText(reason) })
     })
-  }, [list, read, open])
+  }, [list, open, previewFile])
 
   // Register the controller once, forwarding through a ref so the service
   // always reaches the latest callback without re-registering on identity
@@ -361,35 +422,25 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
       load(entry.path)
       return
     }
-    const seq = ++requestSeq.current
-    setReadState({ status: 'loading' })
-    read(entry.path).then((result) => {
-      if (seq !== requestSeq.current) return
-      const unwrapped = unwrapRemote(result)
-      if (!unwrapped.ok) {
-        setReadState({ status: 'error', message: unwrapped.message })
-        return
-      }
-      const business = unwrapped.value
-      if (business.ok) {
-        setReadState({ status: 'ready', path: entry.path, content: business.value.content, truncated: business.value.truncated })
-      } else {
-        setReadState({ status: 'error', message: business.error.message })
-      }
-    }, (reason: unknown) => {
-      if (seq !== requestSeq.current) return
-      setReadState({ status: 'error', message: failureText(reason) })
-    })
-  }, [read])
+    previewFile(entry.path)
+  }, [previewFile])
 
   const listing = listState.status === 'ready' ? listState.listing : null
   const crumbs = listing?.crumbs ?? []
   const entries = listing?.entries ?? []
   const busy = listState.status === 'loading'
 
+  // The path shown in the preview bar: the text-read path or the content-URL
+  // path (images and web pages never take the text-read branch).
+  const previewedPath = readState.status === 'ready'
+    ? readState.path
+    : contentUrlState.status === 'ready'
+      ? contentUrlState.path
+      : undefined
+
   // PDF export of the rendered preview (mermaid diagrams included). The
   // export targets the preview body element so only the file content lands
-  // in the document.
+  // in the document. Text-only: images and web pages have no DOM to export.
   const previewRef = useRef<HTMLDivElement | null>(null)
   const handleExportPdf = useCallback(() => {
     const preview = previewRef.current
@@ -540,21 +591,24 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
             )}
 
             <div className={css.previewArea}>
-              {readState.status === 'idle' && (
+              {readState.status === 'idle' && contentUrlState.status === 'idle' && (
                 <div className={css.previewHint}>{t('openFile')}</div>
               )}
-              {readState.status === 'loading' && (
+              {(readState.status === 'loading' || contentUrlState.status === 'loading') && (
                 <div className={css.status} role="status">{t('readLoading')}</div>
               )}
               {readState.status === 'error' && (
                 <div className={css.error} role="alert">{t('readError')} {readState.message}</div>
               )}
-              {readState.status === 'ready' && (
+              {contentUrlState.status === 'error' && (
+                <div className={css.error} role="alert">{t('contentError')} {contentUrlState.message}</div>
+              )}
+              {(readState.status === 'ready' || contentUrlState.status === 'ready') && (
                 <>
                   <div className={css.pathBar}>
-                    <span className={css.pathLabel} title={readState.path}>{t('pathLabel')}</span>
-                    <span className={css.pathValue}>{relativePath(readState.path, listing?.root ?? '')}</span>
-                    {isMarkdownFile(readState.path) && (
+                    <span className={css.pathLabel} title={previewedPath}>{t('pathLabel')}</span>
+                    <span className={css.pathValue}>{relativePath(previewedPath ?? '', listing?.root ?? '')}</span>
+                    {previewedPath !== undefined && isMarkdownFile(previewedPath) && (
                       <button
                         type="button"
                         className={clsx(css.copyButton, tocOpen && css.copyButtonActive)}
@@ -572,7 +626,7 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
                       className={css.copyButton}
                       aria-label={t('copyPath')}
                       onClick={() => {
-                        const rel = relativePath(readState.path, listing?.root ?? '')
+                        const rel = relativePath(previewedPath ?? '', listing?.root ?? '')
                         void writeClipboard(rel).then((ok) => {
                           if (!ok) return
                           setPathCopied(true)
@@ -583,16 +637,18 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
                       <IconCopyOutline16 size={13} />
                       {pathCopied ? t('copied') : t('copyPath')}
                     </button>
-                    <button
-                      type="button"
-                      className={css.copyButton}
-                      aria-label={t('exportPdf')}
-                      disabled={exporting}
-                      onClick={() => { handleExportPdf() }}
-                    >
-                      <IconDownloadOutline16 size={13} />
-                      {exporting ? t('exporting') : t('exportPdf')}
-                    </button>
+                    {readState.status === 'ready' && (
+                      <button
+                        type="button"
+                        className={css.copyButton}
+                        aria-label={t('exportPdf')}
+                        disabled={exporting}
+                        onClick={() => { handleExportPdf() }}
+                      >
+                        <IconDownloadOutline16 size={13} />
+                        {exporting ? t('exporting') : t('exportPdf')}
+                      </button>
+                    )}
                   </div>
                   {exportError !== null && (
                     <div className={css.exportError} role="alert">{t('exportFailed')}: {exportError}</div>
@@ -617,15 +673,45 @@ export function FileBrowserAction({ wide, list, read, t, registerController, unr
                         </div>
                       </nav>
                     )}
-                    <div ref={previewRef} className={css.previewWrap}>
-                      {isMarkdownFile(readState.path)
-                        ? <MarkdownPreview source={readState.content} />
-                        : (
-                          <pre className={css.preview}>
-                            {readState.content}
-                            {readState.truncated && <div className={css.previewTruncated}>{t('readTruncated')}</div>}
-                          </pre>
-                        )}
+                    <div
+                      ref={previewRef}
+                      className={clsx(
+                        css.previewWrap,
+                        contentUrlState.status === 'ready' && isHtmlFile(contentUrlState.path) && css.previewWrapFrame,
+                      )}
+                    >
+                      {contentUrlState.status === 'ready' && isImageFile(contentUrlState.path) && (
+                        imageFailed
+                          ? <div className={css.previewHint}>{t('contentError')}</div>
+                          : (
+                            <img
+                              className={css.previewImage}
+                              src={contentUrlAbsolute(contentUrlState.url)}
+                              alt={contentUrlState.path.split(/[\\/]/).pop() ?? contentUrlState.path}
+                              onError={() => { setImageFailed(true) }}
+                            />
+                          )
+                      )}
+                      {contentUrlState.status === 'ready' && isHtmlFile(contentUrlState.path) && (
+                        // sandbox without allow-same-origin: the page's scripts
+                        // run but cannot reach the harness's origin or storage.
+                        <iframe
+                          className={css.previewFrame}
+                          src={contentUrlAbsolute(contentUrlState.url)}
+                          sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+                          title={contentUrlState.path.split(/[\\/]/).pop() ?? contentUrlState.path}
+                        />
+                      )}
+                      {readState.status === 'ready' && (
+                        isMarkdownFile(readState.path)
+                          ? <MarkdownPreview source={readState.content} />
+                          : (
+                            <pre className={css.preview}>
+                              {readState.content}
+                              {readState.truncated && <div className={css.previewTruncated}>{t('readTruncated')}</div>}
+                            </pre>
+                          )
+                      )}
                     </div>
                   </div>
                 </>

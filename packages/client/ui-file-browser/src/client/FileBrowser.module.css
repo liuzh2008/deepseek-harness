@@ -267,6 +267,31 @@
   overflow-y: auto;
 }
 
+/* Web-page preview: the wrap stops scrolling itself and lets the iframe fill
+   the surface edge to edge. */
+.previewWrapFrame {
+  overflow: hidden;
+  padding: 0;
+}
+
+/* Image preview: contain within the wrap, centered on the muted surface. */
+.previewImage {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
+/* Web-page preview: full-bleed iframe over the whole preview surface. */
+.previewFrame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--dsw-color-surface);
+}
+
 /* Rendered markdown surface: the shared MarkdownText output plus diagram
    blocks, scrolling with the wrap above. */
 .markdownPreview {

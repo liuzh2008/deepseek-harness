@@ -21,6 +21,9 @@
       "path": "../../sandbox/sandbox-policy"
     },
     {
+      "path": "../webserver"
+    },
+    {
       "path": "../../runtime-diagnostics/invariants"
     }
   ]

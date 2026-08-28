@@ -61,9 +61,12 @@ function dirEntry(name: string, path: string): FileBrowserEntry {
 function mountAction(overrides: {
   list?: (path?: string) => Promise<RemoteResult<unknown>>
   read?: (path: string) => Promise<RemoteResult<unknown>>
+  contentUrl?: (path: string) => Promise<RemoteResult<unknown>>
 } = {}) {
   const list = overrides.list ?? vi.fn(() => Promise.resolve(remoteOk(businessOk(listing('/w', '/w', [])))))
   const read = overrides.read ?? vi.fn(() => Promise.resolve(remoteOk(businessOk({ path: '', content: '', truncated: false, bytes: 0 }))))
+  const contentUrl = overrides.contentUrl
+    ?? vi.fn(() => Promise.resolve(remoteOk(businessOk({ path: '', url: '', bytes: 0, mime: 'application/octet-stream' }))))
   const registerController = vi.fn()
   const unregisterController = vi.fn()
   const view = render(
@@ -71,6 +74,7 @@ function mountAction(overrides: {
       wide={false}
       list={list as never}
       read={read as never}
+      contentUrl={contentUrl as never}
       t={t}
       registerController={registerController}
       unregisterController={unregisterController}
@@ -80,7 +84,7 @@ function mountAction(overrides: {
     />,
   )
   const controller = registerController.mock.calls[0]?.[0] as FileBrowserOpenerController
-  return { view, controller, list, read, registerController, unregisterController }
+  return { view, controller, list, read, contentUrl, registerController, unregisterController }
 }
 
 describe('FileBrowserAction open-at-path controller', () => {
@@ -272,6 +276,69 @@ describe('FileBrowserAction open-at-path controller', () => {
     controller.openAt('/w/missing/report.txt')
     await screen.findByRole('dialog')
     expect(screen.getByRole('alert')).toBeTruthy()
+  })
+
+  it('renders an image file through its content URL without a text read', async () => {
+    const { controller, read, contentUrl } = mountAction({
+      list: vi.fn((path?: string) => {
+        if (path === '/w/assets/photo.png') {
+          // A file does not list: the probe rejects, driving the parent path.
+          return Promise.resolve(remoteOk(businessError('directory-unreadable', '/w/assets/photo.png')))
+        }
+        expect(path).toBe('/w/assets')
+        return Promise.resolve(remoteOk(businessOk(listing('/w/assets', '/w', [fileEntry('photo.png', '/w/assets/photo.png')]))))
+      }),
+      contentUrl: vi.fn((path: string) => {
+        expect(path).toBe('/w/assets/photo.png')
+        return Promise.resolve(remoteOk(businessOk({
+          path: '/w/assets/photo.png',
+          url: '/file-browser-content/dGVzdA==/photo.png',
+          bytes: 42,
+          mime: 'image/png',
+        })))
+      }),
+    })
+    controller.openAt('/w/assets/photo.png')
+    await screen.findByRole('dialog')
+    // The image element resolves the content-route URL against the page origin.
+    const image = screen.getByRole('img', { name: 'photo.png' }) as HTMLImageElement
+    expect(image.getAttribute('src')).toBe(`${window.location.origin}/file-browser-content/dGVzdA==/photo.png`)
+    // Image previews never hit the text read; the copy bar still shows the path.
+    expect(read).not.toHaveBeenCalled()
+    expect(contentUrl).toHaveBeenCalledWith('/w/assets/photo.png')
+    expect(screen.getByText('assets/photo.png')).toBeTruthy()
+  })
+
+  it('renders a web page in a sandboxed iframe through its content URL', async () => {
+    const { controller, read, contentUrl } = mountAction({
+      list: vi.fn((path?: string) => {
+        if (path === '/w/site/index.html') {
+          return Promise.resolve(remoteOk(businessError('directory-unreadable', '/w/site/index.html')))
+        }
+        expect(path).toBe('/w/site')
+        return Promise.resolve(remoteOk(businessOk(listing('/w/site', '/w', [fileEntry('index.html', '/w/site/index.html')]))))
+      }),
+      contentUrl: vi.fn((path: string) => {
+        expect(path).toBe('/w/site/index.html')
+        return Promise.resolve(remoteOk(businessOk({
+          path: '/w/site/index.html',
+          url: '/file-browser-content/dGVzdA==/index.html',
+          bytes: 128,
+          mime: 'text/html; charset=utf-8',
+        })))
+      }),
+    })
+    controller.openAt('/w/site/index.html')
+    await screen.findByRole('dialog')
+    const frame = document.querySelector('iframe') as HTMLIFrameElement | null
+    expect(frame).not.toBeNull()
+    expect(frame?.getAttribute('src')).toBe(`${window.location.origin}/file-browser-content/dGVzdA==/index.html`)
+    // The preview iframe is sandboxed without allow-same-origin: scripts run
+    // but the page cannot reach the harness origin or its storage.
+    expect(frame?.getAttribute('sandbox')).toContain('allow-scripts')
+    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin')
+    expect(read).not.toHaveBeenCalled()
+    expect(contentUrl).toHaveBeenCalledWith('/w/site/index.html')
   })
 
 })

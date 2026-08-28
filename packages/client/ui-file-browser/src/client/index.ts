@@ -1,10 +1,11 @@
 /**
  * Browser half of the sidebar file browser: registers a footer action that
  * opens the project file browser dialog, driving the host's
- * `fileBrowser/list`/`fileBrowser/read` Remote primitives through the
- * api-remotes assembly. Mounting this package composes both sides of the
- * browse interaction with one cordis.yml row; no client code branches on a
- * capability kind. The dialog's copy is locale-registered here.
+ * `fileBrowser/list`, `fileBrowser/read`, and `fileBrowser/contentUrl` Remote
+ * primitives through the api-remotes assembly. Mounting this package composes
+ * both sides of the browse interaction with one cordis.yml row; no client
+ * code branches on a capability kind. The dialog's copy is locale-registered
+ * here.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the SlotMap merge declaring the sidebar footer action hole.
@@ -92,6 +93,7 @@ export function apply(ctx: ClientContext): void {
   const injected = (): FileBrowserInjected => ({
     list: path => ctx.remote.fileBrowser.list(path === undefined ? {} : { path }),
     read: path => ctx.remote.fileBrowser.read({ path }),
+    contentUrl: path => ctx.remote.fileBrowser.contentUrl({ path }),
     t: ctx.locale.bind(LOCALE_NS),
     // Arrow wrappers: the opener methods are state closures, not `this`-bound.
     registerController: (next) => { opener.register(next) },

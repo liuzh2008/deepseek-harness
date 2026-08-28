@@ -1,19 +1,27 @@
 /**
  * Project file browser host backend: a Typert Remote exposing read-only
- * directory listing (files AND directories, with sizes and mtimes) and text
- * preview reads, confined to the workspace root. The browser half drives it
- * from the Web UI; nothing renders on the host display.
+ * directory listing (files AND directories, with sizes and mtimes), text
+ * preview reads, and same-origin content URLs that stream file bytes for
+ * browser rendering (images and web pages), all confined to the workspace
+ * root for the listing default while any absolute host path stays browsable.
+ * The browser half drives it from the Web UI; nothing renders on the host
+ * display.
  * @module @deepseek-ai/dsh-host-file-browser
  */
 
 import { Buffer } from 'node:buffer'
+import { createReadStream } from 'node:fs'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {
+  FileBrowserContentUrlRequest,
+  FileBrowserContentUrlResult,
   FileBrowserCrumb,
   FileBrowserEntry,
   FileBrowserFailure,
@@ -58,6 +66,35 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** Web route prefix serving one file's raw bytes for browser rendering. */
+const CONTENT_ROUTE_PREFIX = '/file-browser-content'
+
+/** Base64url token alphabet (URL-safe, no separators). */
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/
+
+/** MIME types for the file kinds the content route renders (web pages and images). */
+const CONTENT_TYPES: Readonly<Record<string, string>> = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.xhtml': 'application/xhtml+xml; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+  '.tif': 'image/tiff',
+  '.tiff': 'image/tiff',
+}
+
+/** The content type the route answers with for one file (unknown kinds stream as octet-stream). */
+function contentTypeOf(path: string): string {
+  return CONTENT_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
+}
+
 /** One breadcrumb row for the level's ancestry (root-to-level inclusive). */
 function ancestryCrumbs(target: string): FileBrowserCrumb[] {
   const crumbs: FileBrowserCrumb[] = []
@@ -76,7 +113,7 @@ function ancestryCrumbs(target: string): FileBrowserCrumb[] {
  * through the api-remotes assembly.
  */
 export class FileBrowserGateway extends TypertRemoteService {
-  static inject = ['sandboxPolicy']
+  static inject = ['sandboxPolicy', 'webServer']
 
   /** Loader validation for the listing and preview bounds. */
   static Config: z<Config> = z.object({
@@ -99,6 +136,14 @@ export class FileBrowserGateway extends TypertRemoteService {
     this.root = resolve(config.root ?? ctx.sandboxPolicy.resolve().workspaceRoot)
     this.maxEntries = config.maxEntries
     this.maxReadBytes = config.maxReadBytes
+    // Serve file bytes through the web server so the browser half can render
+    // images and web pages directly. The route is prefix-owned and disposed
+    // with the service; the handler decodes the base64url directory token and
+    // streams the resolved file with a content type chosen from its extension.
+    ctx.effect(
+      () => ctx.webServer.register({ kind: 'prefix', path: CONTENT_ROUTE_PREFIX, handler: this.serveContent }),
+      'file-browser: content route',
+    )
   }
 
   /**
@@ -213,6 +258,122 @@ export class FileBrowserGateway extends TypertRemoteService {
       buffer = buffer.subarray(3)
     }
     return { content: buffer.toString('utf8'), truncated }
+  }
+
+  /**
+   * Mint the same-origin content URL of one file, for browser rendering of
+   * images and web pages. The URL encodes the file's parent directory as a
+   * base64url token plus the percent-encoded base name, so a served HTML page
+   * resolves its own relative references (images, scripts, stylesheets) back
+   * into the same content route.
+   * @param request - the absolute file path to serve.
+   * @returns the content URL, or an explicit failure.
+   */
+  @Remote('contentUrl')
+  async contentUrl(request: FileBrowserContentUrlRequest): Promise<FileBrowserContentUrlResult> {
+    const { path } = request
+    if (!isAbsolute(path)) {
+      return rejected({ code: 'path-not-absolute', path, message: `cannot serve "${path}": not an absolute path` })
+    }
+    const target = resolve(path)
+    let info
+    try {
+      info = await stat(target)
+    } catch (error: unknown) {
+      return rejected({ code: 'file-unreadable', path: target, message: `cannot serve ${target}: ${messageOf(error)}` })
+    }
+    if (info.isDirectory()) {
+      return rejected({ code: 'file-unreadable', path: target, message: `cannot serve ${target}: is a directory` })
+    }
+    const dirToken = Buffer.from(dirname(target), 'utf8').toString('base64url')
+    const url = `${CONTENT_ROUTE_PREFIX}/${dirToken}/${encodeURIComponent(basename(target))}`
+    return success({
+      path: target,
+      url,
+      bytes: info.size,
+      mime: contentTypeOf(target),
+    })
+  }
+
+  /**
+   * Decode one content-route pathname into the absolute file it names. The
+   * first segment is the base64url parent-directory token; anything after it
+   * is a percent-encoded relative reference (an HTML page's own links and
+   * resources), resolved under that directory. Returns undefined for any
+   * malformed or non-absolute form — the caller answers 404.
+   */
+  private resolveContentTarget(pathname: string): string | undefined {
+    const prefix = `${CONTENT_ROUTE_PREFIX}/`
+    if (!pathname.startsWith(prefix)) return undefined
+    const rest = pathname.slice(prefix.length)
+    const slash = rest.indexOf('/')
+    const token = slash === -1 ? rest : rest.slice(0, slash)
+    if (!TOKEN_PATTERN.test(token)) return undefined
+    const dir = Buffer.from(token, 'base64url').toString('utf8')
+    if (!isAbsolute(dir)) return undefined
+    let relative: string
+    try {
+      relative = decodeURIComponent(slash === -1 ? '' : rest.slice(slash + 1))
+    } catch {
+      return undefined
+    }
+    const target = resolve(dir, relative)
+    return isAbsolute(target) ? target : undefined
+  }
+
+  /** Answer a content-route request by streaming the named file. */
+  private readonly serveContent = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405)
+      res.end()
+      return
+    }
+    let pathname: string
+    try {
+      /* v8 ignore next -- `?? '/'` arm: node:http always sets url on server requests. */
+      pathname = new URL(req.url ?? '/', 'http://x').pathname
+    } catch {
+      res.writeHead(400)
+      res.end()
+      return
+    }
+    const target = this.resolveContentTarget(pathname)
+    if (target === undefined) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    let info
+    try {
+      info = await stat(target)
+    } catch {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    if (!info.isFile()) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    // No-store: the file can change under the browser, and a cache of local
+    // file contents is never desirable. nosniff keeps the bytes labeled.
+    const headers: Record<string, string> = {
+      'content-type': contentTypeOf(target),
+      'content-length': String(info.size),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    }
+    if (req.method === 'HEAD') {
+      res.writeHead(200, headers)
+      res.end()
+      return
+    }
+    res.writeHead(200, headers)
+    const stream = createReadStream(target)
+    /* v8 ignore next -- stream errors only surface on mid-flight IO failures. */
+    stream.on('error', () => { res.destroy() })
+    stream.pipe(res)
   }
 }
 
